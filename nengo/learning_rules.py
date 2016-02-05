@@ -39,8 +39,22 @@ class LearningRuleType(object):
     modifies = None
     probeable = []
 
-    def __init__(self, learning_rate=1e-6):
+    def __init__(self, learning_rate=1e-6, clipType=None, decay_rate_x_dt=0.0):
+        '''
+            clipType can be one of None, 'clip<0', 'clip>0'
+        '''
         self.learning_rate = learning_rate
+        ## convert clipType internally to an integer for faster comparison
+        if clipType is None:
+            self.clipType = 0
+        elif clipType == 'clip<0':
+            self.clipType = 1
+        elif clipType == 'clip>0':
+            self.clipType = 2
+        else:
+            warnings.warn("This %s clipType is not supported."
+                        "Reverting to no clipping." % str(clipType))
+        self.decay_rate_x_dt = decay_rate_x_dt
 
     @property
     def _argreprs(self):
@@ -73,6 +87,10 @@ class PES(LearningRuleType):
         The given learning rate.
     error_connection : Connection
         The modulatory connection created to project the error signal.
+    integral_tau : float or None
+        tau for integrating the delta w; if None, no integration.
+    decay_rate_x_dt : float
+        decay rate*dt for the weights
     """
 
     pre_tau = NumberParam(low=0, low_open=True)
@@ -81,12 +99,14 @@ class PES(LearningRuleType):
     modifies = 'decoders'
     probeable = ['error', 'correction', 'activities', 'delta']
 
-    def __init__(self, learning_rate=1e-4, pre_tau=0.005):
+    def __init__(self, learning_rate=1e-4, pre_tau=0.005,
+                    clipType=None, decay_rate_x_dt=0.0, integral_tau=None):
         if learning_rate >= 1.0:
             warnings.warn("This learning rate is very high, and can result "
                           "in floating point errors from too much current.")
         self.pre_tau = pre_tau
-        super(PES, self).__init__(learning_rate)
+        self.integral_tau = integral_tau
+        super(PES, self).__init__(learning_rate, clipType, decay_rate_x_dt)
 
     @property
     def _argreprs(self):
@@ -96,7 +116,6 @@ class PES(LearningRuleType):
         if self.pre_tau != 0.005:
             args.append("pre_tau=%f" % self.pre_tau)
         return args
-
 
 class BCM(LearningRuleType):
     """Bienenstock-Cooper-Munroe learning rule
@@ -136,7 +155,8 @@ class BCM(LearningRuleType):
     probeable = ['theta', 'pre_filtered', 'post_filtered', 'delta']
 
     def __init__(self, pre_tau=0.005, post_tau=None, theta_tau=1.0,
-                 learning_rate=1e-9):
+                 theta=None, learning_rate=1e-9):
+        self.theta = theta
         self.theta_tau = theta_tau
         self.pre_tau = pre_tau
         self.post_tau = post_tau if post_tau is not None else pre_tau
@@ -155,6 +175,62 @@ class BCM(LearningRuleType):
             args.append("learning_rate=%g" % self.learning_rate)
         return args
 
+class InhVSG(LearningRuleType):
+    """Vogels-Sprekeler-Gerstner learning rule
+
+    Modifies connection weights.
+
+    Parameters
+    ----------
+    learning_rate : float, optional
+        A scalar indicating the rate at which decoders will be adjusted.
+        Defaults to 1e-5.
+    theta : float, optional
+        A scalar indicating the desired firing rate.
+    pre_tau : float, optional
+        Filter constant on activities of neurons in pre population.
+    post_tau : float, optional
+        Filter constant on activities of neurons in post population.
+
+    Attributes
+    ----------
+    learning_rate : float
+        The given learning rate.
+    theta : float
+        A scalar indicating the desired firing rate.
+    pre_tau : float
+        Filter constant on activities of neurons in pre population.
+    post_tau : float
+        Filter constant on activities of neurons in post population.
+    """
+
+    pre_tau = NumberParam(low=0, low_open=True)
+    post_tau = NumberParam(low=0, low_open=True)
+    theta = NumberParam(low=0, low_open=True)
+
+    error_type = 'scalar' # needed to return learning_rule.size_in=1 (see LearningRule in connection.py)
+    modifies = 'weights'
+    probeable = ['pre_filtered', 'post_filtered', 'delta']
+
+    def __init__(self, pre_tau=0.005, post_tau=None, theta=100.0,
+                 learning_rate=1e-9, clipType=None, decay_rate_x_dt=0.0):
+        self.pre_tau = pre_tau
+        self.post_tau = post_tau if post_tau is not None else pre_tau
+        self.theta = theta
+        super(InhVSG, self).__init__(learning_rate, clipType, decay_rate_x_dt)
+
+    @property
+    def _argreprs(self):
+        args = []
+        if self.pre_tau != 0.005:
+            args.append("pre_tau=%f" % self.pre_tau)
+        if self.post_tau != self.pre_tau:
+            args.append("post_tau=%f" % self.post_tau)
+        if self.theta != 3.0:
+            args.append("theta=%f" % self.theta)
+        if self.learning_rate != 1e-9:
+            args.append("learning_rate=%g" % self.learning_rate)
+        return args
 
 class Oja(LearningRuleType):
     """Oja's learning rule

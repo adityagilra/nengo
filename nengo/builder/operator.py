@@ -249,11 +249,16 @@ class SlicedCopy(Operator):
 class ElementwiseInc(Operator):
     """Increment signal Y by A * X (with broadcasting)"""
 
-    def __init__(self, A, X, Y, tag=None):
+    def __init__(self, A, X, Y, tag=None, clipType=0, decay_factor=1.0):
+        '''
+            clipType: =0 for no clipping; =1 for clip<0; =2 for clip>0
+        '''
         self.A = A
         self.X = X
         self.Y = Y
         self.tag = tag
+        self.clipType = clipType
+        self.decay_factor = decay_factor
 
         self.sets = []
         self.incs = [Y]
@@ -282,6 +287,12 @@ class ElementwiseInc(Operator):
 
         def step_elementwiseinc():
             Y[...] += A * X
+            Y[...] *= self.decay_factor
+            # clipType =0:no clipping; =1:clip<0; =2:clip>0
+            if self.clipType == 1: 
+                Y[...] = Y.clip(0)
+            elif self.clipType == 2:
+                Y[...] = Y.clip(max=0)
         return step_elementwiseinc
 
 

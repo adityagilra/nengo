@@ -1,11 +1,11 @@
 import numpy as np
 
 from nengo.builder.builder import Builder
-from nengo.builder.operator import DotInc, ElementwiseInc, Operator, Reset
+from nengo.builder.operator import DotInc, ElementwiseInc, Operator, Reset, PreserveValue
 from nengo.builder.signal import Signal
 from nengo.connection import LearningRule
 from nengo.ensemble import Ensemble, Neurons
-from nengo.learning_rules import BCM, Oja, PES, Voja
+from nengo.learning_rules import BCM, Oja, PES, Voja, InhVSG
 from nengo.node import Node
 from nengo.synapses import Lowpass
 
@@ -23,7 +23,10 @@ class SimBCM(Operator):
 
         self.sets = []
         self.incs = []
-        self.reads = [pre_filtered, post_filtered, theta]
+        if type(theta)==float:
+            self.reads = [pre_filtered, post_filtered]
+        else:
+            self.reads = [pre_filtered, post_filtered, theta]
         self.updates = [delta]
 
     def __str__(self):
@@ -33,7 +36,10 @@ class SimBCM(Operator):
     def make_step(self, signals, dt, rng):
         pre_filtered = signals[self.pre_filtered]
         post_filtered = signals[self.post_filtered]
-        theta = signals[self.theta]
+        if type(self.theta)==float:
+            theta = self.theta
+        else:
+            theta = signals[self.theta]
         delta = signals[self.delta]
         alpha = self.learning_rate * dt
 
@@ -41,6 +47,40 @@ class SimBCM(Operator):
             delta[...] = np.outer(
                 alpha * post_filtered * (post_filtered - theta), pre_filtered)
         return step_simbcm
+
+class SimInhVSG(Operator):
+    """Calculate delta omega according to the VSG rule."""
+    def __init__(self, pre_filtered, post_filtered, theta, delta,
+                 learning_signal, learning_rate, tag=None):
+        self.post_filtered = post_filtered
+        self.pre_filtered = pre_filtered
+        self.theta = theta
+        self.delta = delta
+        self.learning_signal = learning_signal
+        self.learning_rate = learning_rate
+        self.tag = tag
+
+        self.sets = []
+        self.incs = []
+        self.reads = [pre_filtered, post_filtered, learning_signal]
+        self.updates = [delta]
+
+    def __str__(self):
+        return 'SimInhVSG(pre=%s, post=%s -> %s%s)' % (
+            self.pre_filtered, self.post_filtered, self.delta, self._tagstr)
+
+    def make_step(self, signals, dt, rng):
+        pre_filtered = signals[self.pre_filtered]
+        post_filtered = signals[self.post_filtered]
+        delta = signals[self.delta]
+        learning_signal = signals[self.learning_signal]
+        alpha = self.learning_rate * dt
+
+        def step_siminhvsg():
+            delta[...] = -1.0 * np.outer(
+                alpha * learning_signal * (post_filtered - self.theta), pre_filtered)
+                                                                # -1.0* for enforcing inhibition
+        return step_siminhvsg
 
 
 class SimOja(Operator):
@@ -178,8 +218,14 @@ def build_learning_rule(model, rule):
         raise ValueError("Unknown target %r" % rule.modifies)
 
     assert delta.shape == target.shape
+    # update the target (weights/encoders as set above)
+    # clip based on clipType
+    # decay weights based on decay_rate
     model.add_op(
-        ElementwiseInc(model.sig['common'][1], delta, target, tag=tag))
+        ElementwiseInc(model.sig['common'][1],
+                        delta, target, tag=tag, 
+                        clipType=rule.learning_rule_type.clipType,
+                        decay_factor=(1.0-rule.learning_rule_type.decay_rate_x_dt)))
     model.sig[rule]['delta'] = delta
     model.build(rule.learning_rule_type, rule)  # updates delta
 
@@ -191,7 +237,10 @@ def build_bcm(model, bcm, rule):
     pre_filtered = model.build(Lowpass(bcm.pre_tau), pre_activities)
     post_activities = model.sig[get_post_ens(conn).neurons]['out']
     post_filtered = model.build(Lowpass(bcm.post_tau), post_activities)
-    theta = model.build(Lowpass(bcm.theta_tau), post_filtered)
+    if bcm.theta is None:
+        theta = model.build(Lowpass(bcm.theta_tau), post_filtered)
+    else:
+        theta = float(bcm.theta)
 
     model.add_op(SimBCM(pre_filtered,
                         post_filtered,
@@ -206,6 +255,34 @@ def build_bcm(model, bcm, rule):
 
     model.params[rule] = None  # no build-time info to return
 
+@Builder.register(InhVSG)
+def build_inhvsg(model, inhvsg, rule):
+    conn = rule.connection
+
+    # Learning signal, defaults to 1 in case no connection is made
+    # and multiplied by the learning_rate * dt
+    learning = Signal(np.zeros(rule.size_in), name="InhVSG:learning")
+    assert rule.size_in == 1
+    model.add_op(Reset(learning, value=1.0))
+    model.sig[rule]['in'] = learning  # optional connection will attach here
+
+    pre_activities = model.sig[get_pre_ens(conn).neurons]['out']
+    pre_filtered = model.build(Lowpass(inhvsg.pre_tau), pre_activities)
+    post_activities = model.sig[get_post_ens(conn).neurons]['out']
+    post_filtered = model.build(Lowpass(inhvsg.post_tau), post_activities)
+
+    model.add_op(SimInhVSG(pre_filtered,
+                        post_filtered,
+                        inhvsg.theta,
+                        model.sig[rule]['delta'],
+                        learning,
+                        learning_rate=inhvsg.learning_rate))
+
+    # expose these for probes
+    model.sig[rule]['pre_filtered'] = pre_filtered
+    model.sig[rule]['post_filtered'] = post_filtered
+
+    model.params[rule] = None  # no build-time info to return
 
 @Builder.register(Oja)
 def build_oja(model, oja, rule):
@@ -288,6 +365,8 @@ def build_pes(model, pes, rule):
     # correction = -learning_rate * (dt / n_neurons) * error
     n_neurons = (conn.pre_obj.n_neurons if isinstance(conn.pre_obj, Ensemble)
                  else conn.pre_obj.size_in)
+    n_neurons_post = (conn.post_obj.n_neurons if isinstance(conn.post_obj, Ensemble)
+                        else conn.post_obj.size_in)
     lr_sig = Signal(-pes.learning_rate * model.dt / n_neurons,
                     name="PES:learning_rate")
     model.add_op(DotInc(lr_sig, error, correction, tag="PES:correct"))
@@ -308,11 +387,22 @@ def build_pes(model, pes, rule):
         raise ValueError("'pre' object '%s' not suitable for PES learning"
                          % (conn.pre_obj))
 
+    delta = model.sig[rule]['delta']
+    # either reset delta OR keep it with decay (integral of delta)
+    if pes.integral_tau is None:
+        model.add_op(Reset(delta))
+        decay_factor = 1.0
+    else:
+        # need to preserve or reset, else Nengo complains
+        model.add_op(PreserveValue(delta))
+        # integration with kernel of tau integral_tau, normalized to 1
+        decay_factor = (1.0 - model.dt/pes.integral_tau)\
+                                *model.dt/pes.integral_tau
+
     # delta = local_error * activities
-    model.add_op(Reset(model.sig[rule]['delta']))
     model.add_op(ElementwiseInc(
-        local_error.column(), acts.row(), model.sig[rule]['delta'],
-        tag="PES:Inc Delta"))
+        local_error.column(), acts.row(), delta,
+        tag="PES:Inc Delta", decay_factor=decay_factor))
 
     # expose these for probes
     model.sig[rule]['error'] = error
