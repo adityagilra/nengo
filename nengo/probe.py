@@ -88,7 +88,7 @@ class Probe(NengoObject):
     label = StringParam(default=None, optional=True)
 
     def __init__(self, target, attr=None, sample_every=Default,
-                 synapse=Default, solver=Default, seed=Default, label=Default):
+                 synapse=Default, solver=Default, seed=Default, label=Default, on=True):
         self.target = target
         self.attr = attr if attr is not None else self.obj.probeable[0]
         self.sample_every = sample_every
@@ -96,6 +96,7 @@ class Probe(NengoObject):
         self.solver = solver
         self.seed = seed
         self.label = label
+        self.on = on
 
     @property
     def obj(self):

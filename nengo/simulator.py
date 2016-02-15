@@ -163,11 +163,12 @@ class Simulator(object):
     def _probe(self):
         """Copy all probed signals to buffers"""
         for probe in self.model.probes:
-            period = (1 if probe.sample_every is None else
-                      probe.sample_every / self.dt)
-            if self.n_steps % period < 1:
-                tmp = self.signals[self.model.sig[probe]['in']].copy()
-                self._probe_outputs[probe].append(tmp)
+            if probe.on:                # only collect data if probe is 'on'
+                period = (1 if probe.sample_every is None else
+                          probe.sample_every / self.dt)
+                if self.n_steps % period < 1:
+                    tmp = self.signals[self.model.sig[probe]['in']].copy()
+                    self._probe_outputs[probe].append(tmp)
 
     def step(self):
         """Advance the simulator by `self.dt` seconds.
