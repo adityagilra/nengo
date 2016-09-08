@@ -35,12 +35,8 @@ def test_activate_direct_model():
 
         nengo.Connection(direct_mode_ens[0], direct_mode_ens[1])
 
-        nengo.Connection(
-            non_direct_pre.neurons, direct_mode_ens[0],
-            transform=np.ones((1, non_direct_pre.n_neurons)))
-        nengo.Connection(
-            direct_mode_ens[1], non_direct_post.neurons,
-            transform=np.ones((non_direct_post.n_neurons, 1)))
+        nengo.Connection(non_direct_pre.neurons[0], direct_mode_ens[0])
+        nengo.Connection(direct_mode_ens[1], non_direct_post.neurons[0])
         nengo.Probe(non_direct_probe.neurons)
 
     activate_direct_mode(model)
