@@ -1,4 +1,7 @@
+import numpy as np
+
 import nengo
+from nengo.utils.network import activate_direct_mode
 
 
 def test_withself():
@@ -19,3 +22,30 @@ def test_withself():
             e2 = nengo.Ensemble(10, dimensions=1)
             assert e2 in ea1.ensembles
     assert len(nengo.Network.context) == 0
+
+
+def test_activate_direct_model():
+    with nengo.Network() as model:
+        direct_mode_ens = [nengo.Ensemble(10, 1), nengo.Ensemble(10, 1)]
+        non_direct_pre = nengo.Ensemble(10, 1)
+        non_direct_post = nengo.Ensemble(10, 1)
+        non_direct_probe = nengo.Ensemble(10, 1)
+        non_direct_mode_ens = [
+            non_direct_pre, non_direct_post, non_direct_probe]
+
+        nengo.Connection(direct_mode_ens[0], direct_mode_ens[1])
+
+        nengo.Connection(
+            non_direct_pre.neurons, direct_mode_ens[0],
+            transform=np.ones((1, non_direct_pre.n_neurons)))
+        nengo.Connection(
+            direct_mode_ens[1], non_direct_post.neurons,
+            transform=np.ones((non_direct_post.n_neurons, 1)))
+        p = nengo.Probe(non_direct_probe.neurons)
+
+    activate_direct_mode(model)
+
+    for ens in direct_mode_ens:
+        assert type(ens.neuron_type) is nengo.Direct
+    for ens in non_direct_mode_ens:
+        assert type(ens.neuron_type) is not nengo.Direct
