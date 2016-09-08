@@ -53,6 +53,10 @@ Release History
   `#1148 <https://github.com/nengo/nengo/pull/1148>`_)
 - Tweaked ``rasterplot`` so that spikes from different neurons don't overlap.
   (`#1121 <https://github.com/nengo/nengo/pull/1121>`_)
+- Added ``activate_direcd_mode`` function to make it easier to activate direct
+  mode in networks where some parts require neurons.
+  (`#1168 <https://github.com/nengo/nengo/pull/1168>`_,
+  `#1111 <https://github.com/nengo/nengo/issues/1111>`_)
 
 **Documentation**
 
