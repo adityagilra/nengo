@@ -5,7 +5,7 @@ from nengo.builder.operator import DotInc, ElementwiseInc, Operator, Reset, Pres
 from nengo.builder.signal import Signal
 from nengo.connection import LearningRule
 from nengo.ensemble import Ensemble, Neurons
-from nengo.learning_rules import BCM, Oja, PES, Voja, InhVSG
+from nengo.learning_rules import BCM, Oja, PES, Voja, InhVSG, VoltageRule
 from nengo.node import Node
 from nengo.synapses import Lowpass
 
@@ -346,6 +346,55 @@ def build_voja(model, voja, rule):
 
     model.params[rule] = None  # no build-time info to return
 
+@Builder.register(VoltageRule)
+def build_voltagerule(model, voltagerule, rule):
+    conn = rule.connection
+
+    if not isinstance(conn.pre_obj, (Neurons,Ensemble)):
+        raise ValueError("'pre' object '%s' should be Neurons/Ensemble for VoltageRule"
+                         % (conn.pre_obj))
+    if not isinstance(conn.post_obj, (Neurons,Ensemble)):
+        raise ValueError("'post' object '%s' should be Neurons/Ensemble for VoltageRule"
+                         % (conn.post_obj))
+
+    voltage = model.sig[conn.post_obj]['voltage']
+    acts = model.build(Lowpass(voltagerule.pre_tau), model.sig[conn.pre_obj]['out'])
+
+    # Use the post-synaptic voltage as the local error signal
+    local_error = Signal(np.zeros(voltage.shape), name="VoltageRule:correction")
+    model.add_op(Reset(local_error))
+    
+    # correction = -learning_rate * (dt / n_neurons) * error
+    n_neurons = (conn.pre_obj.n_neurons if isinstance(conn.pre_obj, Ensemble)
+                 else conn.pre_obj.size_in)
+    n_neurons = (conn.pre_obj.n_neurons if isinstance(conn.pre_obj, Ensemble)
+                 else conn.pre_obj.size_in)
+    lr_sig = Signal(-voltagerule.learning_rate * model.dt / n_neurons,
+                    name="VoltageRule:learning_rate")
+    model.add_op(DotInc(lr_sig, voltage, local_error, tag="VoltageRule:correct"))
+
+    delta = model.sig[rule]['delta']
+    # either reset delta OR keep it with decay (integral of delta)
+    if voltagerule.integral_tau is None:
+        model.add_op(Reset(delta))
+        decay_factor = 1.0
+    else:
+        # need to preserve or reset, else Nengo complains
+        model.add_op(PreserveValue(delta))
+        # integration with kernel of tau integral_tau, normalized to 1
+        decay_factor = (1.0 - model.dt/voltagerule.integral_tau)\
+                                *model.dt/voltagerule.integral_tau
+
+    # delta = local_error * activities
+    model.add_op(ElementwiseInc(
+        local_error.column(), acts.row(), delta,
+        tag="VoltageRule:Inc Delta", decay_factor=decay_factor))
+
+    # expose these for probes
+    model.sig[rule]['correction'] = local_error
+    model.sig[rule]['activities'] = acts
+
+    model.params[rule] = None  # no build-time info to return
 
 @Builder.register(PES)
 def build_pes(model, pes, rule):

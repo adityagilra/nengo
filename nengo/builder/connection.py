@@ -58,9 +58,15 @@ def build_linear_system(model, conn, rng):
 
 
 def build_decoders(model, conn, rng):
-    encoders = model.params[conn.pre_obj].encoders
-    gain = model.params[conn.pre_obj].gain
-    bias = model.params[conn.pre_obj].bias
+    if conn.pre_obj.label=='ratorOut':
+        print('Yahoo! in nengo/builder/connection.py')
+        encoders = model.params[conn.pre_obj].encoders
+        gain = model.params[conn.pre_obj].gain
+        bias = model.params[conn.pre_obj].bias
+    else:
+        encoders = model.params[conn.pre_obj].encoders
+        gain = model.params[conn.pre_obj].gain
+        bias = model.params[conn.pre_obj].bias
 
     eval_points = get_eval_points(model, conn, rng)
     targets = get_targets(model, conn, eval_points)
@@ -82,6 +88,10 @@ def build_decoders(model, conn, rng):
             "Building %s: 'activities' matrix is all zero for %s. "
             "This is because no evaluation points fall in the firing "
             "ranges of any neurons." % (conn, conn.pre_obj))
+
+    #np.random.seed(1)
+    #decoders = decoders * (np.random.uniform(-5.,5.,size=decoders.shape)+1.0)
+    #print decoders
 
     return eval_points, decoders, solver_info
 
@@ -202,6 +212,10 @@ def build_connection(model, conn):
     # Add operator for filtering
     if conn.synapse is not None:
         signal = model.build(conn.synapse, signal)
+
+    # added to be able to probe the output of only this connection
+    #  before adding to next Ensemble/Node's model.sig[conn]['out']
+    model.sig[conn]['this_out'] = signal
 
     # Copy to the proper slice
     model.add_op(SlicedCopy(

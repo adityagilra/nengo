@@ -117,6 +117,54 @@ class PES(LearningRuleType):
             args.append("pre_tau=%f" % self.pre_tau)
         return args
 
+class VoltageRule(LearningRuleType):
+    """ dw/dt = learning_rate * post_voltage * pre_spiking_low_pass
+
+    Parameters
+    ----------
+    pre_tau : float, optional
+        Filter constant on activities of neurons in pre population.
+        Defaults to 0.005.
+    learning_rate : float, optional
+        A scalar indicating the rate at which decoders will be adjusted.
+        Defaults to 1e-5.
+
+    Attributes
+    ----------
+    pre_tau : float
+        Filter constant on activities of neurons in pre population.
+    learning_rate : float
+        The given learning rate.
+    integral_tau : float or None
+        tau for integrating the delta w; if None, no integration.
+    decay_rate_x_dt : float
+        decay rate*dt for the weights
+    """
+
+    pre_tau = NumberParam(low=0, low_open=True)
+
+    error_type = 'decoded'
+    modifies = 'decoders'
+    probeable = ['correction', 'activities', 'delta']
+
+    def __init__(self, learning_rate=1e-4, pre_tau=0.005,
+                    clipType=None, decay_rate_x_dt=0.0, integral_tau=None):
+        if learning_rate >= 1.0:
+            warnings.warn("This learning rate is very high, and can result "
+                          "in floating point errors from too much current.")
+        self.pre_tau = pre_tau
+        self.integral_tau = integral_tau
+        super(VoltageRule, self).__init__(learning_rate, clipType, decay_rate_x_dt)
+
+    @property
+    def _argreprs(self):
+        args = []
+        if self.learning_rate != 1e-4:
+            args.append("learning_rate=%g" % self.learning_rate)
+        if self.pre_tau != 0.005:
+            args.append("pre_tau=%f" % self.pre_tau)
+        return args
+
 class BCM(LearningRuleType):
     """Bienenstock-Cooper-Munroe learning rule
 

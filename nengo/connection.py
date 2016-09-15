@@ -294,7 +294,7 @@ class Connection(NengoObject):
 
     @property
     def probeable(self):
-        return ['output', 'input', 'weights']
+        return ['output', 'input', 'weights', 'output_net']
 
     @property
     def pre_obj(self):

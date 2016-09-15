@@ -50,7 +50,8 @@ probemap = {
               'input': 'in'},
     Node: {'output': None},
     Connection: {'output': 'out',
-                 'input': 'in'},
+                 'input': 'in',
+                 'output_net': 'this_out'},
     LearningRule: {},  # make LR signals probable, but no mapping required
 }
 
