@@ -28,6 +28,10 @@ Release History
   making repeated access much faster.
   (`#1076 <https://github.com/nengo/nengo/issues/1076>`_,
   `#1175 <https://github.com/nengo/nengo/pull/1175>`_)
+- Integer indexing of Nengo objects raises an ``IndexError`` now to be
+  consistent with standard Python behaviour.
+  (`#1176 <https://github.com/nengo/nengo/issues/1176>`_,
+  `#1183 <https://github.com/nengo/nengo/pull/1183>`_)
 
 **Deprecated**
 
