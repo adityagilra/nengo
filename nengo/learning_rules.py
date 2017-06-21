@@ -153,17 +153,20 @@ class PES(LearningRuleType):
 class VoltageRule(LearningRuleType):
     """ dw/dt = learning_rate * post_voltage * pre_spiking_low_pass
 
+    Modifies a connection's decoders to minimize an error signal provided
+    through a connection to the connection's learning rule.
+
     Parameters
     ----------
-    pre_tau : float, optional
+    learning_rate : float, optional (Default: 1e-4)
+        A scalar indicating the rate at which weights will be adjusted.
+    pre_tau : float, optional (Default: 0.005)
         Filter constant on activities of neurons in pre population.
-        Defaults to 0.005.
-    learning_rate : float, optional
-        A scalar indicating the rate at which decoders will be adjusted.
-        Defaults to 1e-5.
 
     Attributes
     ----------
+    learning_rate : float
+        A scalar indicating the rate at which weights will be adjusted.
     pre_tau : float
         Filter constant on activities of neurons in pre population.
     learning_rate : float
@@ -174,11 +177,10 @@ class VoltageRule(LearningRuleType):
         decay rate*dt for the weights
     """
 
-    pre_tau = NumberParam(low=0, low_open=True)
-
-    error_type = 'decoded'
     modifies = 'decoders'
-    probeable = ['correction', 'activities', 'delta']
+    probeable = ('error', 'correction', 'activities', 'delta')
+
+    pre_tau = NumberParam('pre_tau', low=0, low_open=True)
 
     def __init__(self, learning_rate=1e-4, pre_tau=0.005,
                     clipType=None, decay_rate_x_dt=0.0, integral_tau=None):
@@ -187,7 +189,7 @@ class VoltageRule(LearningRuleType):
                           "in floating point errors from too much current.")
         self.pre_tau = pre_tau
         self.integral_tau = integral_tau
-        super(VoltageRule, self).__init__(learning_rate, clipType, decay_rate_x_dt)
+        super(VoltageRule, self).__init__(learning_rate, size_in='post_state', clipType, decay_rate_x_dt)
 
     @property
     def _argreprs(self):
@@ -195,7 +197,7 @@ class VoltageRule(LearningRuleType):
         if self.learning_rate != 1e-4:
             args.append("learning_rate=%g" % self.learning_rate)
         if self.pre_tau != 0.005:
-            args.append("pre_tau=%f" % self.pre_tau)
+            args.append("pre_tau=%g" % self.pre_tau)
         return args
 
 class BCM(LearningRuleType):
@@ -281,8 +283,13 @@ class InhVSG(LearningRuleType):
         A scalar indicating the desired firing rate.
     pre_tau : float, optional
         Filter constant on activities of neurons in pre population.
-    post_tau : float, optional
+    post_tau : float, optional (Default: None)
         Filter constant on activities of neurons in post population.
+        If None, post_tau will be the same as pre_tau.
+    beta : float, optional (Default: 1.0)
+        A scalar weight on the forgetting term.
+    learning_rate : float, optional (Default: 1e-6)
+        A scalar indicating the rate at which weights will be adjusted.
 
     Attributes
     ----------
@@ -296,20 +303,19 @@ class InhVSG(LearningRuleType):
         Filter constant on activities of neurons in post population.
     """
 
-    pre_tau = NumberParam(low=0, low_open=True)
-    post_tau = NumberParam(low=0, low_open=True)
-    theta = NumberParam(low=0, low_open=True)
-
-    error_type = 'scalar' # needed to return learning_rule.size_in=1 (see LearningRule in connection.py)
     modifies = 'weights'
-    probeable = ['pre_filtered', 'post_filtered', 'delta']
+    probeable = ('pre_filtered', 'post_filtered', 'delta')
+
+    pre_tau = NumberParam('pre_tau', low=0, low_open=True)
+    post_tau = NumberParam('post_tau', low=0, low_open=True)
+    theta = NumberParam('theta', low=0)
 
     def __init__(self, pre_tau=0.005, post_tau=None, theta=100.0,
-                 learning_rate=1e-9, clipType=None, decay_rate_x_dt=0.0):
+                 learning_rate=1e-9, clip_type=None, decay_rate_x_dt=0.0):
         self.pre_tau = pre_tau
         self.post_tau = post_tau if post_tau is not None else pre_tau
         self.theta = theta
-        super(InhVSG, self).__init__(learning_rate, clipType, decay_rate_x_dt)
+        super(InhVSG, self).__init__(learning_rate, size_in=0, clip_type, decay_rate_x_dt)
 
     @property
     def _argreprs(self):
