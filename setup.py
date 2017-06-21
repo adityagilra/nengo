@@ -1,60 +1,16 @@
 #!/usr/bin/env python
 import imp
 import io
-import sys
 import os
+import sys
 
 try:
-    from setuptools import setup
+    from setuptools import find_packages, setup
 except ImportError:
-    from ez_setup import use_setuptools
-    use_setuptools()
-
-from setuptools import find_packages, setup  # noqa: F811
-from setuptools.command.test import test as TestCommand
-
-
-class PyTest(TestCommand):
-    user_options = [('pytest-args=', 'a', "Arguments to pass to py.test")]
-
-    def initialize_options(self):
-        TestCommand.initialize_options(self)
-        self.pytest_args = None
-
-    def _test_args(self):
-        return []
-
-    def finalize_options(self):
-        TestCommand.finalize_options(self)
-        del self.test_args[:]
-        self.test_suite = True
-
-    def run_tests(self):
-        import pytest
-        errno = pytest.main(self.pytest_args)
-        sys.exit(errno)
-
-
-class Tox(TestCommand):
-    user_options = [('tox-args=', 'a', "Arguments to pass to tox")]
-
-    def initialize_options(self):
-        TestCommand.initialize_options(self)
-        self.tox_args = None
-
-    def _test_args(self):
-        return []
-
-    def finalize_options(self):
-        TestCommand.finalize_options(self)
-        del self.test_args[:]
-        self.test_suite = True
-
-    def run_tests(self):
-        import tox
-        import shlex
-        errno = tox.cmdline(args=shlex.split(self.tox_args))
-        sys.exit(errno)
+    raise ImportError(
+        "'setuptools' is required but not installed. To install it, "
+        "follow the instructions at "
+        "https://pip.pypa.io/en/stable/installing/#installing-with-get-pip-py")
 
 
 def read(*filenames, **kwargs):
@@ -66,40 +22,54 @@ def read(*filenames, **kwargs):
             buf.append(f.read())
     return sep.join(buf)
 
+
 root = os.path.dirname(os.path.realpath(__file__))
 version_module = imp.load_source(
     'version', os.path.join(root, 'nengo', 'version.py'))
-description = ("Tools for making neural simulations using the methods "
-               + "of the Neural Engineering Framework")
-long_description = read('README.rst', 'CHANGES.rst')
+testing = 'test' in sys.argv or 'pytest' in sys.argv
 
 setup(
     name="nengo",
     version=version_module.version,
     author="Applied Brain Research",
-    author_email="celiasmith@uwaterloo.ca",
+    author_email="info@appliedbrainresearch.com",
     packages=find_packages(),
     scripts=[],
     data_files=[('nengo', ['nengo-data/nengorc'])],
     url="https://github.com/nengo/nengo",
-    license="See LICENSE.rst",
-    description=description,
-    long_description=long_description,
+    license="Free for non-commercial use",
+    description="Tools for making neural simulations using the "
+                "Neural Engineering Framework",
+    long_description=read('README.rst', 'CHANGES.rst'),
+    zip_safe=False,
     # Without this, `setup.py install` fails to install NumPy.
     # See https://github.com/nengo/nengo/issues/508 for details.
-    setup_requires=[
-        "numpy>=1.6",
+    setup_requires=["pytest-runner"] if testing else [] + [
+        "numpy>=1.7",
     ],
     install_requires=[
-        "numpy>=1.6",
+        "numpy>=1.7",
     ],
     extras_require={
-        'all_solvers': ["scipy", "scikit-learn"],
+        'all_solvers': ["scipy>=0.13", "scikit-learn"],
     },
-    tests_require=['pytest>=2.3'],
-    cmdclass={
-        'test': PyTest,
-        'tox': Tox,
+    tests_require=[
+        'pytest>=2.3',
+    ],
+    entry_points={
+        'nengo.backends': [
+            'reference = nengo:Simulator'
+        ],
     },
-    zip_safe=False,
+    classifiers=[  # https://pypi.python.org/pypi?%3Aaction=list_classifiers
+        'Development Status :: 5 - Production/Stable',
+        'Intended Audience :: Science/Research',
+        'License :: Free for non-commercial use',
+        'Operating System :: OS Independent',
+        'Programming Language :: Python :: 2.7',
+        'Programming Language :: Python :: 3.4',
+        'Programming Language :: Python :: 3.5',
+        'Programming Language :: Python :: 3.6',
+        'Topic :: Scientific/Engineering :: Artificial Intelligence',
+    ],
 )

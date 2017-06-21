@@ -31,11 +31,10 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 from __future__ import absolute_import
 
+import io
 import os
 import platform
-import sys
 import time
-import unicodedata
 import uuid
 
 import numpy as np
@@ -76,6 +75,7 @@ try:
 except ImportError:
     def get_ipython():
         return None
+assert get_ipython
 
 
 def has_ipynb_widgets():
@@ -164,7 +164,7 @@ def hide_input():
 
 
 def load_notebook(nb_path):
-    with open(nb_path) as f:
+    with io.open(nb_path, 'r', encoding='utf-8') as f:
         nb = read_nb(f)
     return nb
 
@@ -176,16 +176,18 @@ def export_py(nb, dest_path=None):
     """
     exporter = PythonExporter()
     body, resources = exporter.from_notebook_node(nb)
-    if sys.version_info[0] == 2:
-        body = unicodedata.normalize('NFKD', body).encode('ascii', 'ignore')
-    # We'll remove %matplotlib inline magic, but leave the rest
-    body = body.replace("get_ipython().magic(u'matplotlib inline')\n", "")
-    body = body.replace("get_ipython().magic('matplotlib inline')\n", "")
-    # Also remove the IPython notebook extension
-    body = body.replace("get_ipython().magic(u'load_ext nengo.ipynb')\n", "")
-    body = body.replace("get_ipython().magic('load_ext nengo.ipynb')\n", "")
+
+    # Remove all lines with get_ipython
+    while u"get_ipython()" in body:
+        ind0 = body.find(u"get_ipython()")
+        ind1 = body.find(u"\n", ind0)
+        body = body[:ind0] + body[(ind1 + 1):]
+
+    if u"plt" in body:
+        body += u"\nplt.show()\n"
+
     if dest_path is not None:
-        with open(dest_path, 'w') as f:
+        with io.open(dest_path, 'w', encoding='utf-8') as f:
             f.write(body)
     return body
 
@@ -234,7 +236,7 @@ def export_html(nb, dest_path=None, image_dir=None, image_rel_dir=None):
         html_out = export_images(resources, image_dir, image_rel_dir, html_out)
 
     if dest_path is not None:
-        with open(dest_path, 'w') as f:
+        with io.open(dest_path, 'w', encoding='utf-8') as f:
             f.write(html_out)
     return html_out
 
@@ -261,8 +263,11 @@ def export_evaluated(nb, dest_path=None, skip_exceptions=False):
     nb_runner.run_notebook(skip_exceptions=skip_exceptions)
 
     if dest_path is not None:
-        with open(dest_path, 'w') as f:
-            write_nb(nb_runner.nb, f)
+        with io.open(dest_path, 'w', encoding='utf-8') as f:
+            if IPython.version_info[0] <= 2:
+                write_nb(nb_runner.nb, f, 'ipynb')
+            else:
+                write_nb(nb_runner.nb, f)
     return nb_runner.nb
 
 
@@ -343,7 +348,8 @@ class NotebookRunner(object):
                 cell['prompt_number'] = content['execution_count']
                 out.prompt_number = content['execution_count']
 
-            if msg_type in ('status', 'pyin', 'execute_input'):
+            if msg_type in ('status', 'pyin', 'execute_input',
+                            'comm_open', 'comm_msg'):
                 continue
             elif msg_type == 'stream':
                 out.stream = content['name']
@@ -355,6 +361,8 @@ class NotebookRunner(object):
                     except KeyError:
                         raise NotImplementedError(
                             'unhandled mime type: %s' % mime)
+                    if "widgets/js/widget" in data:
+                        continue
                     setattr(out, attr, data)
             elif msg_type == 'pyerr':
                 out.ename = content['ename']

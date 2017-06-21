@@ -1,306 +1,43 @@
-"""Signals represent values that will be used in the simulation.
-
-This code adapted from sigops/signal.py and sigops/signaldict.py
-(https://github.com/jaberg/sigops).
-This modified code is included under the terms of their license:
-
-Copyright (c) 2014, James Bergstra
-All rights reserved.
-
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions are
-met:
-
-1. Redistributions of source code must retain the above copyright
-   notice, this list of conditions and the following disclaimer.
-
-2. Redistributions in binary form must reproduce the above copyright
-   notice, this list of conditions and the following disclaimer in the
-   documentation and/or other materials provided with the
-   distribution.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-"""
+from __future__ import division
 
 import numpy as np
 
 import nengo.utils.numpy as npext
-from nengo.utils.compat import StringIO
+from nengo.exceptions import SignalError
+from nengo.utils.compat import StringIO, is_integer
 
 
-class SignalView(object):
+class Signal(object):
+    """Represents data or views onto data within a Nengo simulation.
 
-    def __init__(self, base, shape, elemstrides, offset, name=None):
-        assert base is not None
-        self.base = base
-        self.shape = tuple(shape)
-        self.elemstrides = tuple(elemstrides)
-        self.offset = int(offset)
-        if name is not None:
-            self._name = name
+    Signals are tightly coupled to NumPy arrays, which is how live data is
+    represented in a Nengo simulation. Signals provide a view onto the
+    important metadata of the live NumPy array, and maintain the original
+    value of the array in order to reset the simulation to the initial state.
 
-    def __len__(self):
-        return self.shape[0]
-
-    def __str__(self):
-        return '%s{%s, %s}' % (
-            self.__class__.__name__,
-            self.name, self.shape)
-
-    def __repr__(self):
-        return '%s{%s, %s}' % (
-            self.__class__.__name__,
-            self.name, self.shape)
-
-    def view_like_self_of(self, newbase, name=None):
-        if newbase.base != newbase:
-            raise NotImplementedError()
-        if newbase.structure != self.base.structure:
-            raise NotImplementedError('technically ok but should not happen',
-                                      (self.base, newbase))
-        return SignalView(newbase,
-                          self.shape,
-                          self.elemstrides,
-                          self.offset,
-                          name)
-
-    @property
-    def structure(self):
-        return (self.shape, self.elemstrides, self.offset)
-
-    def same_view_as(self, other):
-        return self.structure == other.structure and self.base == other.base
-
-    @property
-    def dtype(self):
-        return np.dtype(self.base.dtype)
-
-    @property
-    def ndim(self):
-        return len(self.shape)
-
-    @property
-    def readonly(self):
-        return not self.value.flags.writeable
-
-    @property
-    def size(self):
-        return int(np.prod(self.shape))
-
-    def reshape(self, *shape):
-        if len(shape) == 1 and isinstance(shape[0], (list, tuple)):
-            shape = shape[0]
-
-        if -1 in shape:
-            shape = list(shape)
-            shape[shape.index(-1)] = self.size / int(-1 * np.prod(shape))
-            if -1 in shape:
-                raise ValueError("can only specify one unknown dimension")
-
-        if self.size == 1:
-            # -- scalars can be reshaped to any number of (1, 1, 1...)
-            elemstrides = [1] * len(shape)
-        else:
-            elemstrides = [1]
-            for si in reversed(shape[1:]):
-                elemstrides = [si * elemstrides[0]] + elemstrides
-
-        size = int(np.prod(shape))
-        if size != self.size:
-            raise ValueError(shape, self.shape)
-        return SignalView(base=self.base,
-                          shape=shape,
-                          elemstrides=elemstrides,
-                          offset=self.offset)
-
-    def column(self):
-        """Reshape into a column vector."""
-        return self.reshape((self.size, 1))
-
-    def row(self):
-        """Reshape into a row vector."""
-        return self.reshape((1, self.size))
-
-    def transpose(self, neworder=None):
-        if neworder:
-            raise NotImplementedError()
-        return SignalView(
-            self.base,
-            reversed(self.shape),
-            reversed(self.elemstrides),
-            self.offset,
-            self.name + '.T'
-        )
-
-    @property
-    def T(self):
-        if self.ndim < 2:
-            return self
-        else:
-            return self.transpose()
-
-    def __getitem__(self, item):  # noqa: C901
-        # -- copy the shape and strides
-        shape = list(self.shape)
-        elemstrides = list(self.elemstrides)
-        offset = self.offset
-        if isinstance(item, (list, tuple)):
-            dims_to_del = []
-            for ii, idx in enumerate(item):
-                if isinstance(idx, int):
-                    dims_to_del.append(ii)
-                    offset += idx * elemstrides[ii]
-                elif isinstance(idx, slice):
-                    start, stop, stride = idx.indices(shape[ii])
-                    offset += start * elemstrides[ii]
-                    if stride != 1:
-                        raise NotImplementedError()
-                    shape[ii] = stop - start
-            for dim in reversed(dims_to_del):
-                shape.pop(dim)
-                elemstrides.pop(dim)
-            return SignalView(
-                base=self.base,
-                shape=shape,
-                elemstrides=elemstrides,
-                offset=offset)
-        elif isinstance(item, (int, np.integer)):
-            if len(self.shape) == 0:
-                raise IndexError()
-            if not (0 <= item < self.shape[0]):
-                raise NotImplementedError()
-            shape = self.shape[1:]
-            elemstrides = self.elemstrides[1:]
-            offset = self.offset + item * self.elemstrides[0]
-            return SignalView(
-                base=self.base,
-                shape=shape,
-                elemstrides=elemstrides,
-                offset=offset)
-        elif isinstance(item, slice):
-            return self.__getitem__((item,))
-        else:
-            raise NotImplementedError(item)
-
-    @property
-    def name(self):
-        try:
-            return self._name
-        except AttributeError:
-            if self.base is self:
-                return '<anon%d>' % id(self)
-            else:
-                return 'View(%s[%d])' % (self.base.name, self.offset)
-
-    @name.setter
-    def name(self, value):
-        self._name = value
-
-    def is_contiguous(self):
-        shape, strides, offset = self.structure
-        if len(shape) == 0:
-            return True, offset, offset + 1
-        elif len(shape) == 1:
-            if strides[0] == 1:
-                return True, offset, offset + shape[0]
-            else:
-                return False, None, None
-        elif len(shape) == 2:
-            if strides == (1, shape[0]) or strides == (shape[1], 1):
-                return True, offset, offset + shape[0] * shape[1]
-            else:
-                return False, None, None
-        else:
-            raise NotImplementedError()
-        # if self.ndim == 1 and self.elemstrides[0] == 1:
-            # return self.offset, self.offset + self.size
-
-    def shares_memory_with(self, other):  # noqa: C901
-        # TODO: WRITE SOME UNIT TESTS FOR THIS FUNCTION !!!
-        # Terminology: two arrays *overlap* if the lowermost memory addressed
-        # touched by upper one is higher than the uppermost memory address
-        # touched by the lower one.
-        #
-        # np.may_share_memory returns True iff there is overlap.
-        # Overlap is a necessary but insufficient condition for *aliasing*.
-        #
-        # Aliasing is when two ndarrays refer a common memory location.
-        if self.base is not other.base or self.size == 0 or other.size == 0:
-            return False
-        elif self is other or self.same_view_as(other):
-            return True
-        elif self.ndim < other.ndim:
-            return other.shares_memory_with(self)
-
-        assert self.ndim > 0
-        if self.ndim == 1:
-            # -- self is a vector view
-            #    and other is either a scalar or vector view
-            ae0, = self.elemstrides
-            be0, = other.elemstrides
-            amin = self.offset
-            amax = amin + self.shape[0] * ae0
-            bmin = other.offset
-            bmax = bmin + other.shape[0] * be0
-            if amin <= amax <= bmin <= bmax or bmin <= bmax <= amin <= amax:
-                return False
-            elif ae0 == be0 == 1:
-                # -- strides are equal, and we've already checked for
-                #    non-overlap. They do overlap, so they are aliased.
-                return True
-            # TODO: look for common divisor of ae0 and be0
-            raise NotImplementedError('1d', (self.structure, other.structure))
-        elif self.ndim == 2:
-            # -- self is a matrix view
-            #    and other is either a scalar, vector or matrix view
-            a_contig, amin, amax = self.is_contiguous()
-            b_contig, bmin, bmax = other.is_contiguous()
-
-            if a_contig and b_contig:
-                # -- both have a contiguous memory layout,
-                #    from min up to but not including max
-                return (not (amin <= amax <= bmin <= bmax)
-                        and not (bmin <= bmax <= amin <= amax))
-            elif a_contig:
-                # -- only a contiguous
-                raise NotImplementedError('2d self:contig, other:discontig',
-                                          (self.structure, other.structure))
-            else:
-                raise NotImplementedError('2d',
-                                          (self.structure, other.structure))
-        raise NotImplementedError()
-
-    @property
-    def value(self):
-        """Returns a view on the base array's value."""
-        try:
-            # for some installations, this works
-            itemsize = int(self.dtype.itemsize)
-        except TypeError:
-            # other installations, this...
-            itemsize = int(self.dtype().itemsize)
-        byteoffset = itemsize * self.offset
-        bytestrides = [itemsize * s for s in self.elemstrides]
-        view = np.ndarray(shape=self.shape,
-                          dtype=self.dtype,
-                          buffer=self.base._value.data,
-                          offset=byteoffset,
-                          strides=bytestrides)
-        return view
-
-
-class Signal(SignalView):
-    """Interpretable, vector-valued quantity within Nengo"""
+    Parameters
+    ----------
+    initial_value : array_like
+        The initial value of the signal. Much of the metadata tracked by the
+        Signal is based on this array as well (e.g., dtype).
+    name : str, optional (Default: None)
+        Name of the signal. Primarily used for debugging.
+        If None, the memory location of the Signal will be used.
+    base : Signal, optional (Default: None)
+        The base signal, if this signal is a view on another signal.
+        Linking the two signals with the ``base`` argument is necessary
+        to ensure that their live data is also linked.
+    readonly : bool, optional (Default: False)
+        Whether this signal and its related live data should be marked as
+        readonly. Writing to these arrays will raise an exception.
+    offset : int, optional (Default: 0)
+        For a signal view this gives the offset of the view from the base
+        ``initial_value`` in bytes. This might differ from the offset
+        of the NumPy array view provided as ``initial_value`` if the base
+        is a view already (in which case the signal base offset will be 0
+        because it starts where the view starts. That NumPy view can have
+        an offset of itself).
+    """
 
     # Set assert_named_signals True to raise an Exception
     # if model.signal is used to create a signal with no name.
@@ -309,52 +46,189 @@ class Signal(SignalView):
     # up in a model.
     assert_named_signals = False
 
-    def __init__(self, value, name=None):
-        # Make sure we use a C-contiguous array
-        self._value = np.array(value, copy=False, order='C', dtype=np.float64)
-        if name is not None:
-            self._name = name
-        if Signal.assert_named_signals:
+    def __init__(self, initial_value,
+                 name=None, base=None, readonly=False, offset=0):
+        if self.assert_named_signals:
             assert name
+        self._name = name
 
-    def __str__(self):
-        try:
-            return "Signal(" + self._name + ", shape=" + str(self.shape) + ")"
-        except AttributeError:
-            return ("Signal(id " + str(id(self)) + ", shape="
-                    + str(self.shape) + ")")
+        if not np.isscalar(initial_value) and base is None:
+            self._initial_value = np.ascontiguousarray(initial_value).view()
+        else:
+            self._initial_value = np.asarray(initial_value).view()
+        self._initial_value.setflags(write=False)
+
+        if base is not None:
+            assert isinstance(base, Signal) and not base.is_view
+            # make sure initial_value uses the same data as base.initial_value
+            assert initial_value.base is base.initial_value.base
+        self._base = base
+        self._offset = offset
+
+        self._readonly = bool(readonly)
+
+    def __getitem__(self, item):
+        """Index or slice into array"""
+        if item is Ellipsis or (
+                isinstance(item, slice) and item == slice(None)):
+            return self
+
+        if not isinstance(item, tuple):
+            item = (item,)
+
+        if not all(is_integer(i) or isinstance(i, slice) for i in item):
+            raise SignalError("Can only index or slice into signals")
+
+        if all(map(is_integer, item)):
+            # turn one index into slice to get a view from numpy
+            item = item[:-1] + (slice(item[-1], item[-1]+1),)
+
+        view = self._initial_value[item]
+        offset = (npext.array_offset(view)
+                  - npext.array_offset(self._initial_value))
+        return Signal(view, name="%s[%s]" % (self.name, item),
+                      base=self.base, offset=offset)
 
     def __repr__(self):
-        return str(self)
-
-    @property
-    def dtype(self):
-        return self.value.dtype
-
-    @property
-    def shape(self):
-        return self.value.shape
-
-    @property
-    def size(self):
-        return self.value.size
-
-    @property
-    def elemstrides(self):
-        s = np.asarray(self.value.strides)
-        return tuple(int(si / self.dtype.itemsize) for si in s)
-
-    @property
-    def offset(self):
-        return 0
+        return "Signal(%s, shape=%s)" % (self._name, self.shape)
 
     @property
     def base(self):
-        return self
+        """(Signal or None) The base signal, if this signal is a view.
+
+        Linking the two signals with the ``base`` argument is necessary
+        to ensure that their live data is also linked.
+        """
+        return self if self._base is None else self._base
 
     @property
-    def value(self):
-        return self._value
+    def dtype(self):
+        """(numpy.dtype) Data type of the signal (e.g., float64)."""
+        return self.initial_value.dtype
+
+    @property
+    def elemoffset(self):
+        """(int) Offset of data from base in elements."""
+        return self.offset // self.itemsize
+
+    @property
+    def elemstrides(self):
+        """(int) Strides of data in elements."""
+        return tuple(s // self.itemsize for s in self.strides)
+
+    @property
+    def initial_value(self):
+        """(numpy.ndarray) Initial value of the signal.
+
+        Much of the metadata tracked by the Signal is based on this array
+        as well (e.g., dtype).
+        """
+        return self._initial_value
+
+    @initial_value.setter
+    def initial_value(self, val):
+        raise SignalError("Cannot change initial value after initialization")
+
+    @property
+    def is_view(self):
+        """(bool) True if this Signal is a view on another Signal."""
+        return self._base is not None
+
+    @property
+    def itemsize(self):
+        """(int) Size of an array element in bytes."""
+        return self.initial_value.itemsize
+
+    @property
+    def name(self):
+        """(str) Name of the signal. Primarily used for debugging."""
+        return self._name if self._name is not None else ("0x%x" % id(self))
+
+    @name.setter
+    def name(self, name):
+        self._name = name
+
+    @property
+    def nbytes(self):
+        """(int) Number of bytes consumed by the signal."""
+        # Equivalent to self.itemsize * self.size
+        return self.initial_value.nbytes
+
+    @property
+    def ndim(self):
+        """(int) Number of array dimensions."""
+        return self.initial_value.ndim
+
+    @property
+    def offset(self):
+        """(int) Offset of data from base in bytes.
+
+        For a signal view this gives the offset of the view from the base
+        ``initial_value`` in bytes. This might differ from the offset
+        of the NumPy array view provided as ``initial_value`` if the base
+        is a view already (in which case the signal base offset will be 0
+        because it starts where the view starts. That NumPy view can have
+        an offset of itself).
+        """
+        return self._offset
+
+    @property
+    def readonly(self):
+        """(bool) Whether associated live data can be changed."""
+        return self._readonly
+
+    @readonly.setter
+    def readonly(self, readonly):
+        self._readonly = bool(readonly)
+
+    @property
+    def shape(self):
+        """(tuple) Tuple of array dimensions."""
+        return self.initial_value.shape
+
+    @property
+    def size(self):
+        """(int) Total number of elements."""
+        return self.initial_value.size
+
+    @property
+    def strides(self):
+        """(tuple) Strides of data in bytes."""
+        return self.initial_value.strides
+
+    def column(self):
+        """Return a view on this signal with column vector shape."""
+        return self.reshape((self.size, 1))
+
+    def may_share_memory(self, other):
+        """Determine if two signals might overlap in memory.
+
+        This comparison is not exact and errs on the side of false positives.
+        See `numpy.may_share_memory` for more details.
+
+        Parameters
+        ----------
+        other : Signal
+            The other signal we are investigating.
+        """
+        return np.may_share_memory(self.initial_value, other.initial_value)
+
+    def reshape(self, *shape):
+        """Return a view on this signal with a different shape.
+
+        Note that ``reshape`` cannot change the overall size of the signal.
+        See `numpy.reshape` for more details.
+
+        Any number of integers can be passed to this method,
+        describing the desired shape of the returned signal.
+        """
+        return Signal(self._initial_value.reshape(*shape),
+                      name="%s.reshape(%s)" % (self.name, shape),
+                      base=self.base)
+
+    def row(self):
+        """Return a view on this signal with row vector shape."""
+        return self.reshape((1, self.size))
 
 
 class SignalDict(dict):
@@ -366,36 +240,18 @@ class SignalDict(dict):
 
     Use ``init`` to set the ndarray initially.
     """
-
-    def __getitem__(self, obj):
-        """SignalDict overrides __getitem__ for two reasons.
-
-        1. so that scalars are returned as 0-d ndarrays
-        2. so that a SignalView lookup returns a views of its base
-        """
-        if obj in self:
-            return dict.__getitem__(self, obj)
-        elif obj.base in self:
-            # look up views as a fallback
-            # --work around numpy's special case behaviour for scalars
-            base_array = self[obj.base]
-            try:
-                # for some installations, this works
-                itemsize = int(obj.dtype.itemsize)
-            except TypeError:
-                # other installations, this...
-                itemsize = int(obj.dtype().itemsize)
-            byteoffset = itemsize * obj.offset
-            bytestrides = [itemsize * s for s in obj.elemstrides]
-            view = np.ndarray(shape=obj.shape,
-                              dtype=obj.dtype,
-                              buffer=base_array.data,
-                              offset=byteoffset,
-                              strides=bytestrides)
-            return view
-        else:
-            raise KeyError("%s has not been initialized. Please call "
-                           "SignalDict.init first." % (str(obj)))
+    def __getitem__(self, key):
+        try:
+            return dict.__getitem__(self, key)
+        except KeyError:
+            if isinstance(key, Signal) and key.base is not key:
+                # return a view on the base signal
+                base = dict.__getitem__(self, key.base)
+                return np.ndarray(
+                    buffer=base, dtype=key.dtype, shape=key.shape,
+                    offset=key.offset, strides=key.strides)
+            else:
+                raise
 
     def __setitem__(self, key, val):
         """Ensures that ndarrays stay in the same place in memory.
@@ -405,7 +261,7 @@ class SignalDict(dict):
         silent typos when debugging Simulator. Every key must instead
         be explicitly initialized with SignalDict.init.
         """
-        self.__getitem__(key)[...] = val
+        self[key][...] = val
 
     def __str__(self):
         """Pretty-print the signals and current values."""
@@ -416,11 +272,26 @@ class SignalDict(dict):
 
     def init(self, signal):
         """Set up a permanent mapping from signal -> ndarray."""
-        # Make a copy of base.value to start
-        val = npext.array(signal.base.value, readonly=signal.readonly)
-        dict.__setitem__(self, signal.base, val)
+        if signal in self:
+            raise SignalError("Cannot add signal twice")
+
+        x = signal.initial_value
+        if signal.is_view:
+            if signal.base not in self:
+                self.init(signal.base)
+
+            # get a view onto the base data
+            view = np.ndarray(
+                shape=x.shape, strides=x.strides, offset=signal.offset,
+                dtype=x.dtype, buffer=self[signal.base].data)
+            assert np.array_equal(view, x)
+            view.setflags(write=not signal.readonly)
+            dict.__setitem__(self, signal, view)
+        else:
+            x = x.view() if signal.readonly else x.copy()
+            dict.__setitem__(self, signal, x)
 
     def reset(self, signal):
         """Reset ndarray to the base value of the signal that maps to it"""
         if not signal.readonly:
-            self[signal] = signal.value
+            self[signal] = signal.initial_value

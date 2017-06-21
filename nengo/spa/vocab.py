@@ -2,7 +2,8 @@ import warnings
 
 import numpy as np
 
-import nengo
+from nengo.exceptions import ReadonlyError, SpaParseError, ValidationError
+from nengo.params import Parameter
 from nengo.spa import pointer
 from nengo.utils.compat import is_iterable, is_number, is_integer, range
 
@@ -11,63 +12,61 @@ class Vocabulary(object):
     """A collection of semantic pointers, each with their own text label.
 
     The Vocabulary can also act as a dictionary, with keys as the names
-    of the semantic pointers and values as the SemanticPointer objects
-    themselves.  If it is asked for a pointer that does not exist, one will
+    of the semantic pointers and values as the `.SemanticPointer` objects
+    themselves. If it is asked for a pointer that does not exist, one will
     be automatically created.
 
     Parameters
     -----------
     dimensions : int
-        Number of dimensions for each semantic pointer
-    randomize : bool, optional
-        Whether to randomly generate pointers.  If False, the semantic
-        pointers will be [1,0,0,...], [0,1,0,...], [0,0,1,...] and so on.
-    unitary : bool or list of strings, optional
-        If True, all generated pointers to be unitary.  If a list of
-        names, any pointer whose name is on the list will be forced to be
+        Number of dimensions for each semantic pointer.
+    randomize : bool, optional (Default: True)
+        Whether to randomly generate pointers. If False, the semantic
+        pointers will be ``[1, 0, 0, ...], [0, 1, 0, ...], [0, 0, 1, ...]``
+        and so on.
+    unitary : bool or list, optional (Default: False)
+        If True, all generated pointers will be unitary. If a list of
+        strings, any pointer whose name is in the list will be forced to be
         unitary when created.
-    max_similarity : float, optional
+    max_similarity : float, optional (Default: 0.1)
         When randomly generating pointers, ensure that the cosine of the
         angle between the new pointer and all existing pointers is less
-        than this amount.  If the system is unable to find such a pointer
+        than this amount. If the system is unable to find such a pointer
         after 100 tries, a warning message is printed.
-    include_pairs : bool, optional
-        Whether to keep track of all pairs of pointers as well.  This
-        is helpful for determining if a vector is similar to A*B (in
-        addition to being similar to A or B), but exponentially increases
-        the processing time.
-    rng : numpy.random.RandomState, optional
-        The random number generator to use to create new vectors
+    include_pairs : bool, optional (Default: False)
+        Whether to keep track of all pairs of pointers as well. This
+        is helpful for determining if a vector is similar to ``A*B`` (in
+        addition to being similar to ``A`` or ``B``), but exponentially
+        increases the processing time.
+    rng : `numpy.random.RandomState`, optional (Default: None)
+        The random number generator to use to create new vectors.
 
     Attributes
     ----------
-    keys : list of strings
-        The names of all known semantic pointers ('A', 'B', 'C')
-    key_pairs : list of strings
-        The names of all pairs of semantic pointers ('A*B', 'A*C', 'B*C')
-    vectors : numpy.array
-        All of the semantic pointer values in a matrix, in the same order
-        as in keys
-    vector_pairs : numpy.array
-        The values for each pair of semantic pointers, convolved together,
-        in the same order as in key_pairs
     include_pairs : bool
-        Whether to keep track of all pairs of pointers as well.  This
-        is helpful for determining if a vector is similar to A*B (in
-        addition to being similar to A or B), but exponentially increases
-        the processing time.
-    identity : SemanticPointer
-        The identity vector for this dimensionality [1, 0, 0, 0, ...]
-
+        Whether to keep track of all pairs of pointers as well. This
+        is helpful for determining if a vector is similar to ``A*B`` (in
+        addition to being similar to ``A`` or ``B``), but exponentially
+        increases the processing time.
+    key_pairs : list
+        The names of all pairs of semantic pointers
+        (e.g., ``['A*B', 'A*C', 'B*C']``).
+    keys : list of strings
+        The names of all known semantic pointers (e.g., ``['A', 'B', 'C']``).
+    vector_pairs : ndarray
+        The values for each pair of semantic pointers, convolved together,
+        in the same order as in ``key_pairs``.
+    vectors : ndarray
+        All of the semantic pointer values in a matrix, in the same order
+        as in ``keys``.
     """
 
     def __init__(self, dimensions, randomize=True, unitary=False,
                  max_similarity=0.1, include_pairs=False, rng=None):
 
-        if not is_integer(dimensions):
-            raise TypeError('dimensions must be an integer')
-        if dimensions < 1:
-            raise ValueError('dimensions must be positive')
+        if not is_integer(dimensions) or dimensions < 1:
+            raise ValidationError("dimensions must be a positive integer",
+                                  attr='dimensions', obj=self)
         self.dimensions = dimensions
         self.randomize = randomize
         self.unitary = unitary
@@ -81,6 +80,8 @@ class Vocabulary(object):
         self.include_pairs = include_pairs
         self._identity = None
         self.rng = rng
+        self.readonly = False
+        self.parent = None
 
     def create_pointer(self, attempts=100, unitary=False):
         """Create a new semantic pointer.
@@ -118,20 +119,23 @@ class Vocabulary(object):
         else:
             index = len(self.pointers)
             if index >= self.dimensions:
-                raise IndexError('Tried to make more semantic pointers than' +
-                                 ' dimensions with non-randomized Vocabulary')
+                raise ValidationError(
+                    "Tried to make more semantic pointers than "
+                    "dimensions with non-randomized Vocabulary",
+                    attr='dimensions', obj=self)
             p = pointer.SemanticPointer(np.eye(self.dimensions)[index])
         return p
 
     def __getitem__(self, key):
         """Return the semantic pointer with the requested name.
 
-        If one does not exist, automatically create one.  The key must be
+        If one does not exist, automatically create one. The key must be
         a valid semantic pointer name, which is any Python identifier starting
         with a capital letter.
         """
         if not key[0].isupper():
-            raise KeyError('Semantic pointers must begin with a capital')
+            raise SpaParseError(
+                "Semantic pointers must begin with a capital letter.")
         value = self.pointers.get(key, None)
         if value is None:
             if is_iterable(self.unitary):
@@ -145,15 +149,22 @@ class Vocabulary(object):
     def add(self, key, p):
         """Add a new semantic pointer to the vocabulary.
 
-        The pointer value can be a SemanticPointer or a vector.
+        The pointer value can be a `.SemanticPointer` or a vector.
         """
+        if self.readonly:
+            raise ReadonlyError(attr='Vocabulary',
+                                msg="Cannot add semantic pointer '%s' to "
+                                    "read-only vocabulary." % key)
+
         if not key[0].isupper():
-            raise KeyError('Semantic pointers must begin with a capital')
+            raise SpaParseError(
+                "Semantic pointers must begin with a capital letter.")
         if not isinstance(p, pointer.SemanticPointer):
             p = pointer.SemanticPointer(p)
 
         if key in self.pointers:
-            raise KeyError("The semantic pointer '%s' already exists" % key)
+            raise ValidationError("The semantic pointer %r already exists"
+                                  % key, attr='pointers', obj=self)
 
         self.pointers[key] = p
         self.keys.append(key)
@@ -172,7 +183,7 @@ class Vocabulary(object):
 
     @include_pairs.setter
     def include_pairs(self, value):
-        """Adjusts whether key pairs are kept track of by the Vocabulary.
+        """Adjusts whether key pairs are kept track of by the vocabulary.
 
         If this is turned on, we need to compute all the pairs of terms
         already existing.
@@ -196,11 +207,11 @@ class Vocabulary(object):
     def parse(self, text):
         """Evaluate a text string and return the corresponding SemanticPointer.
 
-        This uses the Python eval() function, so any Python operators that
-        have been defined for SemanticPointers are valid (+, -, *, ~, ()).
-        Any terms do not exist in the vocabulary will be automatically
-        generated.  Valid semantic pointer terms must start with a capital
-        letter.
+        This uses the Python ``eval()`` function, so any Python operators that
+        have been defined for SemanticPointers are valid (``+``, ``-``, ``*``,
+        ``~``, ``()``). Any terms do not exist in the vocabulary will be
+        automatically generated. Valid semantic pointer terms must start
+        with a capital letter.
 
         If the expression returns a scalar (int or float), a scaled version
         of the identity SemanticPointer will be returned.
@@ -213,13 +224,14 @@ class Vocabulary(object):
         try:
             value = eval(text, {}, self)
         except NameError:
-            raise KeyError('Semantic pointers must start with a capital')
+            raise SpaParseError(
+                "Semantic pointers must start with a capital letter.")
 
         if is_number(value):
             value = value * self.identity
         if not isinstance(value, pointer.SemanticPointer):
-            raise TypeError('The result of "%s" was not a SemanticPointer' %
-                            text)
+            raise SpaParseError(
+                "The result of parsing '%s' is not a SemanticPointer" % text)
         return value
 
     @property
@@ -236,30 +248,30 @@ class Vocabulary(object):
         """Return a human-readable text version of the provided vector.
 
         This is meant to give a quick text version of a vector for display
-        purposes.  To do this, compute the dot product between the vector
-        and all the terms in the vocabulary.  The top few vectors are
-        chosen for inclusion in the text.  It will try to only return
+        purposes. To do this, compute the dot product between the vector
+        and all the terms in the vocabulary. The top few vectors are
+        chosen for inclusion in the text. It will try to only return
         terms with a match above the threshold, but will always return
-        at least minimum_count and at most maximum_count terms.  Terms
+        at least minimum_count and at most maximum_count terms. Terms
         are sorted from most to least similar.
 
         Parameters
         ----------
-        v : SemanticPointer or array
-            The vector to convert into text
-        minimum_count : int, optional
-            Always return at least this many terms in the text
-        maximum_count : int, optional
-            Never return more than this many terms in the text
-        threshold : float, optional
-            How small a similarity for a term to be ignored
-        join : string, optional
-            The text separator to use between terms
-        terms : list of strings, optional
-            Only consider terms in this list
-        normalize : bool, optional
-            Whether to normalize the vector before computing similarity
-
+        v : SemanticPointer or ndarray
+            The vector to convert into text.
+        minimum_count : int, optional (Default: 1)
+            Always return at least this many terms in the text.
+        maximum_count : int, optional (Default: None)
+            Never return more than this many terms in the text.
+            If None, all terms will be returned.
+        threshold : float, optional (Default: 0.1)
+            How small a similarity for a term to be ignored.
+        join : str, optional (Default: ';')
+            The text separator to use between terms.
+        terms : list, optional (Default: None)
+            Only consider terms in this list of strings.
+        normalize : bool, optional (Default: False)
+            Whether to normalize the vector before computing similarity.
         """
         if isinstance(v, pointer.SemanticPointer):
             v = v.v
@@ -300,7 +312,7 @@ class Vocabulary(object):
     def dot(self, v):
         """Returns the dot product with all terms in the Vocabulary.
 
-        Input parameter can either be a SemanticPointer or a vector.
+        Input parameter can either be a `.SemanticPointer` or a vector.
         """
         if isinstance(v, pointer.SemanticPointer):
             v = v.v
@@ -309,10 +321,13 @@ class Vocabulary(object):
     def dot_pairs(self, v):
         """Returns the dot product with all pairs of terms in the Vocabulary.
 
-        Input parameter can either be a SemanticPointer or a vector.
+        Input parameter can either be a `.SemanticPointer` or a vector.
         """
         if not self.include_pairs:
-            raise Exception('include_pairs must be True to call dot_pairs')
+            raise ValidationError(
+                "'include_pairs' must be True to call dot_pairs",
+                attr='include_pairs', obj=self)
+
         if isinstance(v, pointer.SemanticPointer):
             v = v.v
         return np.dot(self.vector_pairs, v)
@@ -326,35 +341,49 @@ class Vocabulary(object):
         Parameters
         ----------
         other : Vocabulary
-            The other vocabulary to translate into
-        keys : list of strings
+            The other vocabulary to translate into.
+        keys : list, optional (Default: None)
             If None, any term that exists in just one of the Vocabularies
-            will be created in the other Vocabulary and included.  Otherwise,
-            the transformation will only consider terms in this list.  Any
+            will be created in the other Vocabulary and included. Otherwise,
+            the transformation will only consider terms in this list. Any
             terms in this list that do not exist in the Vocabularies will
             be created.
         """
-        if keys is None:
-            keys = list(self.keys)
-            for k in other.keys:
-                if k not in keys:
-                    keys.append(k)
+        # If the parent vocabs of self and other are the same, then no
+        # transform is needed between the two vocabularies, so return an
+        # identity matrix.
+        my_parent = self if self.parent is None else self.parent
+        other_parent = other if other.parent is None else other.parent
 
-        t = np.zeros((other.dimensions, self.dimensions), dtype=float)
-        for k in keys:
-            a = self[k].v
-            b = other[k].v
-            t += np.outer(b, a)
-        return t
+        if my_parent is other_parent:
+            return np.eye(self.dimensions)
+        else:
+            if keys is None:
+                if self.readonly and other.readonly:
+                    keys = [k for k in self.keys if k in other.keys]
+                elif self.readonly:
+                    keys = list(self.keys)
+                elif other.readonly:
+                    keys = list(other.keys)
+                else:
+                    keys = list(self.keys)
+                    keys.extend([k for k in other.keys if k not in self.keys])
+
+            t = np.zeros((other.dimensions, self.dimensions), dtype=float)
+            for k in keys:
+                a = self[k].v
+                b = other[k].v
+                t += np.outer(b, a)
+            return t
 
     def prob_cleanup(self, similarity, vocab_size, steps=10000):
         """Estimate the chance of successful cleanup.
 
         This returns the chance that, out of vocab_size randomly chosen
         vectors, at least one of them will be closer to a particular
-        vector than the value given by compare.  To use this, compare
+        vector than the value given by compare. To use this, compare
         your noisy vector with the ideal vector, pass that value in as
-        the similarity parameter, and set vocab_size to be the number of
+        the similarity parameter, and set ``vocab_size`` to be the number of
         competing vectors.
 
         The steps parameter sets the accuracy of the approximate integral
@@ -362,7 +391,7 @@ class Vocabulary(object):
 
         The basic principle used here is that the probability of two random
         vectors in a D-dimensional space being a given angle apart is
-        proportional to sin(angle)**(D-2).  So we integrate this value
+        proportional to ``sin(angle)**(D-2)``.  So we integrate this value
         to get a probability of one vector being farther away than the
         desired angle, and then raise that to vocab_size to get the
         probability that all of them are farther away.
@@ -385,6 +414,36 @@ class Vocabulary(object):
         pcorrect = (1 - perror1) ** vocab_size
         return pcorrect
 
+    def extend(self, keys, unitary=False):
+        """Extends the vocabulary with additional keys.
+
+        Creates and adds the semantic pointers listed in keys to the
+        vocabulary.
+
+        Parameters
+        ----------
+        keys : list
+            List of semantic pointer names to be added to the vocabulary.
+        unitary : bool or list, optional (Default: False)
+            If True, all generated pointers will be unitary. If a list of
+            strings, any pointer whose name is on the list will be forced to
+            be unitary when created.
+        """
+        if is_iterable(unitary):
+            if is_iterable(self.unitary):
+                self.unitary.extend(unitary)
+            else:
+                self.unitary = list(unitary)
+        elif unitary:
+            if is_iterable(self.unitary):
+                self.unitary.extend(keys)
+            else:
+                self.unitary = list(keys)
+
+        for key in keys:
+            if key not in self.keys:
+                self[key]
+
     def create_subset(self, keys):
         """Returns the subset of this vocabulary.
 
@@ -393,37 +452,37 @@ class Vocabulary(object):
 
         Parameters
         ----------
-        keys : list of strings
+        keys : list
             List of semantic pointer names to be copied over to the
             new vocabulary.
-
         """
-
-        # Make new vocabulary object
-        result = Vocabulary(self.dimensions,
+        # Make new Vocabulary object
+        subset = Vocabulary(self.dimensions,
                             self.randomize,
                             self.unitary,
                             self.max_similarity,
                             self.include_pairs,
                             self.rng)
 
-        # Make a copy of the desired keys
+        # Copy over the new keys
         for key in keys:
-            result.add(key, self[key])
+            subset.add(key, self.pointers[key])
 
-        # Return the result
-        return result
+        # Assign the parent
+        if self.parent is not None:
+            subset.parent = self.parent
+        else:
+            subset.parent = self
+
+        # Make the subset read only
+        subset.readonly = True
+
+        return subset
 
 
-class VocabularyParam(nengo.params.Parameter):
+class VocabularyParam(Parameter):
     """Can be a Vocabulary."""
 
-    def validate(self, instance, vocab):
-        super(VocabularyParam, self).validate(instance, vocab)
-
-        if vocab is not None and not isinstance(vocab, Vocabulary):
-            raise ValueError(
-                "Must be Vocabulary (got type {0}).".format(
-                    vocab.__class__.__name__))
-
-        return vocab
+    def coerce(self, instance, vocab):
+        self.check_type(instance, vocab, Vocabulary)
+        return super(VocabularyParam, self).coerce(instance, vocab)

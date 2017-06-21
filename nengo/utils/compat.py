@@ -1,6 +1,8 @@
 from __future__ import absolute_import
 
 import collections
+import os
+import subprocess
 import sys
 
 import numpy as np
@@ -8,19 +10,11 @@ import numpy as np
 # Only test for Python 2 so that we have less changes for Python 4
 PY2 = sys.version_info[0] == 2
 
-# OrderedDict and Counter were introduced in Python 2.7
-try:
-    from collections import Counter, OrderedDict
-except ImportError:
-    from ordereddict import OrderedDict
-    from counter import Counter
-assert Counter
-assert OrderedDict
-
 # If something's changed from Python 2 to 3, we handle that here
 if PY2:
     import cPickle as pickle
     import ConfigParser as configparser
+    from itertools import izip_longest as zip_longest
     from StringIO import StringIO
     string_types = (str, unicode)
     int_types = (int, long)
@@ -39,6 +33,28 @@ if PY2:
         assert isinstance(s, bytes)
         return s
 
+    if sys.platform.startswith('win'):
+
+        def replace(src, dst):
+            # The Windows implementation of replace calls out to the shell
+            # to do 'move /Y src dst' due to an odd bug in 32-bit versions
+            # of Python 2.7. See https://github.com/nengo/nengo/pull/1107
+            # for the bizarre details.
+            with open(os.devnull, 'w') as devnull:
+                subprocess.check_call(["move", "/Y", src, dst],
+                                      shell=True,
+                                      stdout=devnull,
+                                      stderr=devnull)
+
+    else:
+
+        def replace(src, dst):
+            try:
+                os.rename(src, dst)
+            except OSError:
+                os.remove(dst)
+                os.rename(src, dst)
+
     class TextIO(StringIO):
         def write(self, data):
             if not isinstance(data, unicode):
@@ -47,14 +63,28 @@ if PY2:
                                'replace')
             StringIO.write(self, data)
 
+    class ResourceWarning(DeprecationWarning):
+        """A warning about resource usage.
+
+        Note that we subclass from DeprecationWarning here solely because
+        DeprecationWarnings are filtered out by default in Python 2.7,
+        while in Python 3.2+ both DeprecationWarnings and ResourceWarnings
+        are filtered out. Subclassing from DeprecationWarning gives
+        the same (or at least very similar) behavior in Python 2 and 3
+        without having to modify filters in the warnings module.
+        """
+
 else:
     import pickle
     import configparser
     from io import StringIO
+    from itertools import zip_longest
+    from os import replace
     TextIO = StringIO
     string_types = (str,)
     int_types = (int,)
     range = range
+    ResourceWarning = ResourceWarning
 
     # No iterkeys; use ``for key in dict:`` instead
     iteritems = lambda d: iter(d.items())
@@ -69,10 +99,10 @@ else:
         assert isinstance(s, bytes)
         return s
 
-
-assert configparser
 assert pickle
-assert TextIO
+assert configparser
+assert replace
+assert zip_longest
 
 
 def is_integer(obj):
@@ -102,7 +132,10 @@ def is_array(obj):
 
 
 def is_array_like(obj):
-    return is_array(obj) or is_iterable(obj) or is_number(obj)
+    # While it's possible that there are some iterables other than list/tuple
+    # that can be made into arrays, it's very likely that those arrays
+    # will have dtype=object, which is likely to cause unexpected issues.
+    return is_array(obj) or is_number(obj) or isinstance(obj, (list, tuple))
 
 
 def with_metaclass(meta, *bases):

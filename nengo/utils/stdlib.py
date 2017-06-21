@@ -4,7 +4,6 @@ Functions that extend the Python Standard Library.
 
 from __future__ import absolute_import
 
-from contextlib import contextmanager
 import collections
 import inspect
 import itertools
@@ -12,8 +11,150 @@ import os
 import shutil
 import sys
 import time
+import weakref
 
-from .compat import iteritems, reraise
+from .compat import iteritems, itervalues
+
+
+class WeakKeyDefaultDict(collections.MutableMapping):
+    """WeakKeyDictionary that allows to define a default."""
+
+    def __init__(self, default_factory, items=None, **kwargs):
+        super(WeakKeyDefaultDict, self).__init__()
+        self.default_factory = default_factory
+        self._data = weakref.WeakKeyDictionary(items, **kwargs)
+
+    def __contains__(self, key):
+        return key in self._data
+
+    def __getitem__(self, key):
+        if key not in self._data:
+            self._data[key] = self.default_factory()
+        return self._data[key]
+
+    def __setitem__(self, key, value):
+        self._data[key] = value
+
+    def __delitem__(self, key):
+        del self._data[key]
+
+    def __iter__(self):
+        return iter(self._data)
+
+    def __len__(self):
+        return len(self._data)
+
+
+class WeakKeyIDDictionary(collections.MutableMapping):
+    """WeakKeyDictionary that uses object ID to hash.
+
+    This ignores the ``__eq__`` and ``__hash__`` functions on objects,
+    so that objects are only considered equal if one is the other.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super(WeakKeyIDDictionary, self).__init__()
+        self._keyrefs = weakref.WeakValueDictionary()
+        self._keyvalues = {}
+        self._ref2id = {}
+        self._id2ref = {}
+        if len(args) > 0 or len(kwargs) > 0:
+            self.update(*args, **kwargs)
+
+    def __contains__(self, k):
+        if k is None:
+            return False
+        return k is self._keyrefs.get(id(k))
+
+    def __iter__(self):
+        return itervalues(self._keyrefs)
+
+    def __len__(self):
+        return len(self._keyrefs)
+
+    def __delitem__(self, k):
+        assert weakref.ref(k)
+        if k in self:
+            del self._keyrefs[id(k)]
+            del self._keyvalues[id(k)]
+            del self._ref2id[id(self._id2ref[id(k)])]
+            del self._id2ref[id(k)]
+        else:
+            raise KeyError(str(k))
+
+    def __getitem__(self, k):
+        assert weakref.ref(k)
+        if k in self:
+            return self._keyvalues[id(k)]
+        else:
+            raise KeyError(str(k))
+
+    def __setitem__(self, k, v):
+        ref = weakref.ref(k, self.__free_value)  # add callback
+        assert ref
+        self._keyrefs[id(k)] = k
+        self._keyvalues[id(k)] = v
+        self._ref2id[id(ref)] = id(k)
+        self._id2ref[id(k)] = ref
+
+    def __free_value(self, ref):
+        """Free corresponding value when key has no more references"""
+        id_ = self._ref2id[id(ref)]
+        # key already removed from _keyrefs since it is a WeakValueDictionary
+        del self._keyvalues[id_]
+        del self._id2ref[id_]
+        del self._ref2id[id(ref)]
+
+    def get(self, k, default=None):
+        return self._keyvalues[id(k)] if k in self else default
+
+    def keys(self):
+        return itervalues(self._keyrefs)
+
+    def iterkeys(self):
+        return itervalues(self._keyrefs)
+
+    def items(self):
+        for k in self:
+            yield k, self[k]
+
+    def iteritems(self):
+        for k in self:
+            yield k, self[k]
+
+    def update(self, in_dict=None, **kwargs):
+        if in_dict is not None:
+            for key, value in iteritems(in_dict):
+                self.__setitem__(key, value)
+        if len(kwargs) > 0:
+            self.update(kwargs)
+
+
+class WeakSet(collections.MutableSet):
+    """Uses weak references to store the items in the set."""
+
+    def __init__(self, items=None):
+        super(WeakSet, self).__init__()
+        self._data = weakref.WeakKeyDictionary()
+        if items is not None:
+            self |= items
+
+    def __contains__(self, key):
+        return key in self._data
+
+    def __iter__(self):
+        return iter(self._data)
+
+    def __len__(self):
+        return len(self._data)
+
+    def add(self, key):
+        self._data[key] = None
+
+    def discard(self, key):
+        if key in self._data:
+            del self._data[key]
+
 
 CheckedCall = collections.namedtuple('CheckedCall', ('value', 'invoked'))
 
@@ -54,9 +195,6 @@ def execfile(path, globals, locals=None):
 
     with open(path, 'rb') as fp:
         source = fp.read()
-
-    # Python 2.6 line endings issue, see http://bugs.python.org/issue12189
-    source = source.replace(b'\r\n', b'\n').replace(b'\r', b'\n')
 
     code = compile(source, path, "exec")
     exec(code, globals, locals)
@@ -135,39 +273,6 @@ else:
         except:
             pass
         return terminal_size(w, h)
-
-
-@contextmanager
-def nested(*managers):
-    """Combine multiple context managers into a single nested context manager.
-
-    Ideally we would just use the `with ctx1, ctx2` form for this, but
-    this doesn't work in Python 2.6. Similarly, though it would be nice to
-    just import contextlib.nested instead, that doesn't work in Python 3. Geez!
-
-    """
-    exits = []
-    vars = []
-    exc = (None, None, None)
-    try:
-        for mgr in managers:
-            exit = mgr.__exit__
-            enter = mgr.__enter__
-            vars.append(enter())
-            exits.append(exit)
-        yield vars
-    except:
-        exc = sys.exc_info()
-    finally:
-        while exits:
-            exit = exits.pop()
-            try:
-                if exit(*exc):
-                    exc = (None, None, None)
-            except:
-                exc = sys.exc_info()
-        if exc != (None, None, None):
-            reraise(exc[0], exc[1], exc[2])
 
 
 class Timer(object):

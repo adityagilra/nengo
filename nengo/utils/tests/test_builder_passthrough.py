@@ -1,13 +1,12 @@
-from __future__ import print_function
-
 import numpy as np
 import pytest
 
 import nengo
+from nengo.exceptions import Unconvertible
 from nengo.utils.builder import objs_and_connections, remove_passthrough_nodes
 
 
-def test_remove_passthrough():
+def test_remove_passthrough(logger):
     """Test scanning through a model and removing Nodes with output=None"""
 
     model = nengo.Network()
@@ -18,7 +17,7 @@ def test_remove_passthrough():
         b = nengo.networks.EnsembleArray(50, D, label='b')
 
         def printout(t, x):
-            print(t, x)
+            logger.info("%s, %s", t, x)
         output = nengo.Node(printout, size_in=D, label='output')
 
         nengo.Connection(input, a.input, synapse=0.01)
@@ -34,7 +33,7 @@ def test_remove_passthrough():
     assert len(conns) == 21
 
 
-def test_remove_passthrough_bg():
+def test_remove_passthrough_bg(logger):
     """Test scanning through a model and removing Nodes with output=None"""
 
     model = nengo.Network()
@@ -43,7 +42,7 @@ def test_remove_passthrough_bg():
         input = nengo.Node([1]*D, label='input')
 
         def printout(t, x):
-            print(t, x)
+            logger.info("%s, %s", t, x)
         output = nengo.Node(printout, size_in=D, label='output')
         bg = nengo.networks.BasalGanglia(D, 20)
         nengo.Connection(input, bg.input, synapse=0.01)
@@ -65,12 +64,12 @@ def test_passthrough_errors():
         node = nengo.Node(None, size_in=1)
         nengo.Connection(a, node, synapse=0.01)
         nengo.Connection(node, b, synapse=0.01)
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(Unconvertible):
         remove_passthrough_nodes(*objs_and_connections(model))
 
     model = nengo.Network()
     with model:
         node = nengo.Node(None, size_in=1)
         nengo.Connection(node, node, synapse=0.01)
-    with pytest.raises(Exception):
+    with pytest.raises(Unconvertible):
         remove_passthrough_nodes(*objs_and_connections(model))

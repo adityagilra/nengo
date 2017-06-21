@@ -2,7 +2,8 @@ import numpy as np
 import pytest
 
 import nengo
-from nengo.dists import Choice
+from nengo.dists import Choice, UniformHypersphere
+from nengo.exceptions import ValidationError
 from nengo.utils.compat import range
 
 
@@ -36,8 +37,8 @@ def test_multidim(Simulator, plt, seed, rng):
         B_p = nengo.Probe(B.output, synapse=0.03)
         C_p = nengo.Probe(C.output, synapse=0.03)
 
-    sim = Simulator(model)
-    sim.run(0.4)
+    with Simulator(model) as sim:
+        sim.run(0.4)
 
     t = sim.trange()
 
@@ -107,8 +108,8 @@ def test_multifunc(Simulator, plt, seed, rng):
         ea_p = nengo.Probe(ea.output, synapse=0.03)
         ea_funcs_p = nengo.Probe(ea_funcs, synapse=0.03)
 
-    sim = Simulator(model)
-    sim.run(0.4)
+    with Simulator(model) as sim:
+        sim.run(0.4)
 
     t = sim.trange()
 
@@ -172,8 +173,8 @@ def test_matrix_mul(Simulator, plt, seed):
         nengo.Connection(prod, D.input, transform=transformC)
         D_p = nengo.Probe(D.output, synapse=0.03)
 
-    sim = Simulator(model)
-    sim.run(0.3)
+    with Simulator(model) as sim:
+        sim.run(0.3)
 
     t = sim.trange()
     tmask = (t >= 0.2)
@@ -197,7 +198,7 @@ def test_matrix_mul(Simulator, plt, seed):
 
 def test_arguments():
     """Make sure EnsembleArray accepts the right arguments."""
-    with pytest.raises(TypeError):
+    with pytest.raises(ValidationError):
         nengo.networks.EnsembleArray(nengo.LIF(10), 1, dimensions=2)
 
 
@@ -206,9 +207,9 @@ def test_directmode_errors():
         net.config[nengo.Ensemble].neuron_type = nengo.Direct()
 
         ea = nengo.networks.EnsembleArray(10, 2)
-        with pytest.raises(TypeError):
+        with pytest.raises(ValidationError):
             ea.add_neuron_input()
-        with pytest.raises(TypeError):
+        with pytest.raises(ValidationError):
             ea.add_neuron_output()
 
 
@@ -220,9 +221,9 @@ def test_neuroninput(Simulator, seed):
         nengo.Connection(inp, ea.neuron_input, synapse=None)
         p = nengo.Probe(ea.output)
 
-    s = Simulator(net)
-    s.run(0.01)
-    assert np.all(s.data[p] < 1e-2) and np.all(s.data[p] > -1e-2)
+    with Simulator(net) as sim:
+        sim.run(0.01)
+    assert np.all(sim.data[p] < 1e-2) and np.all(sim.data[p] > -1e-2)
 
 
 def test_neuronoutput(Simulator, seed):
@@ -234,6 +235,44 @@ def test_neuronoutput(Simulator, seed):
         nengo.Connection(inp, ea.input, synapse=None)
         p = nengo.Probe(ea.neuron_output)
 
-    s = Simulator(net)
-    s.run(0.01)
-    assert np.all(s.data[p] < 1e-2)
+    with Simulator(net) as sim:
+        sim.run(0.01)
+    assert np.all(sim.data[p] < 1e-2)
+
+
+def test_ndarrays(Simulator, rng):
+    encoders = UniformHypersphere(surface=True).sample(10, 1, rng=rng)
+    max_rates = rng.uniform(200, 400, size=10)
+    intercepts = rng.uniform(-1, 1, size=10)
+    eval_points = rng.uniform(-1, 1, size=(100, 1))
+    with nengo.Network() as net:
+        ea = nengo.networks.EnsembleArray(
+            10, 2,
+            encoders=encoders,
+            max_rates=max_rates,
+            intercepts=intercepts,
+            eval_points=eval_points,
+            n_eval_points=eval_points.shape[0])
+
+    with Simulator(net) as sim:
+        pass
+    built = sim.data[ea.ea_ensembles[0]]
+    assert np.allclose(built.encoders, encoders)
+    assert np.allclose(built.max_rates, max_rates)
+    assert np.allclose(built.intercepts, intercepts)
+    assert np.allclose(built.eval_points, eval_points)
+    assert built.eval_points.shape == eval_points.shape
+
+    with nengo.Network() as net:
+        # Incorrect shapes don't fail until build
+        ea = nengo.networks.EnsembleArray(
+            10, 2,
+            encoders=encoders,
+            max_rates=max_rates,
+            intercepts=intercepts,
+            eval_points=eval_points[:10],
+            n_eval_points=eval_points.shape[0])
+
+    with pytest.raises(ValidationError):
+        with Simulator(net) as sim:
+            pass

@@ -65,7 +65,7 @@ class NotebookDirective(Directive):
             raise ValueError(
                 "Due to issues with docutils stripping spaces from links, "
                 "white space is not allowed in notebook filenames: "
-                "'{0}'".format(nb_path))
+                "'{}'".format(nb_path))
 
         # Check if raw HTML is supported
         if not self.state.document.settings.raw_enabled:
@@ -106,8 +106,8 @@ class NotebookDirective(Directive):
             nb = ipext.export_evaluated(
                 nb, dest_path, skip_exceptions=skip_exceptions)
         except Exception as e:
-            warnings.warn("Notebook conversion failed with the following "
-                          "traceback: \n%s" % e)
+            warnings.warn("Conversion of %s failed with the following "
+                          "traceback:\n%s" % (nb_filename, e))
         evaluated_html = ipext.export_html(
             nb, image_dir=image_dir, image_rel_dir=image_rel_dir)
 

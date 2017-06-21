@@ -2,9 +2,12 @@
 Networks
 ********
 
-Networks are an abstraction of a grouping of nengo objects
-(Nodes, Ensembles, Connections).
-Like all abstractions, this helps with code-reuse and maintainability.
+.. default-role:: obj
+
+Networks are an abstraction of a grouping of Nengo objects
+(i.e., `.Node`, `.Ensemble`, `.Connection`, and `.Network` instances,
+though usually not `.Probe` instances.)
+Like most abstractions, this helps with code-reuse and maintainability.
 You'll find the documentation for the various pre-built networks below.
 
 Building your own network can be a great way to encapsulate
@@ -17,48 +20,35 @@ The following examples will help you to build your own networks:
    examples/network_design
    examples/network_design_advanced
 
-You may also find the following documentation on the ``config`` system
-useful:
+You may also find the :doc:`config system documentation <config>` useful.
 
-.. toctree::
+.. autosummary::
+   :nosignatures:
 
-   examples/config
-
-
-Ensemble Array
-==============
+   nengo.networks.EnsembleArray
+   nengo.networks.BasalGanglia
+   nengo.networks.Thalamus
+   nengo.networks.AssociativeMemory
+   nengo.networks.CircularConvolution
+   nengo.networks.Integrator
+   nengo.networks.Oscillator
+   nengo.networks.Product
+   nengo.networks.InputGatedMemory
 
 .. autoclass:: nengo.networks.EnsembleArray
-   :members:
-
-Action Selection
-================
 
 .. autofunction:: nengo.networks.BasalGanglia
 
 .. autofunction:: nengo.networks.Thalamus
 
-Working Memory
-==============
-
-.. autofunction:: nengo.networks.InputGatedMemory
-
-Product
-=======
-
-.. autofunction:: nengo.networks.Product
-
-Circular Convolution
-====================
+.. autoclass:: nengo.networks.AssociativeMemory
 
 .. autofunction:: nengo.networks.CircularConvolution
 
-Integrator
-==========
-
 .. autofunction:: nengo.networks.Integrator
 
-Oscillator
-==========
-
 .. autofunction:: nengo.networks.Oscillator
+
+.. autofunction:: nengo.networks.Product
+
+.. autofunction:: nengo.networks.InputGatedMemory

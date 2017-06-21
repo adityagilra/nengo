@@ -1,21 +1,23 @@
 """Syntactic parsing of the subexpressions of all action expressions."""
+
+from nengo.exceptions import SpaParseError
 from nengo.utils.compat import is_number
 
 
 class Symbol(object):
-    """A set of semantic pointer symbols and associated math
+    """A set of semantic pointer symbols and associated math.
 
     This is an abstract semantic pointer (not associated with a particular
-    vocabulary or dimension).  It is just meant for keeping track of the
+    vocabulary or dimension). It is just meant for keeping track of the
     desired manipulations until such time as it is parsed with a particular
-    Vocabulary.
+    `.Vocabulary`.
 
     Its contents are a single string, and this string is manipulated via
-    standard mathematical operators (+ - * ~) for SemanticPointers.  The
-    result will always be able to be passed to a Vocabulary's parse()
-    method to get a valid SemanticPointer.
+    standard mathematical operators (``+ - * ~``) for SemanticPointers.
+    The result will always be able to be passed to `.Vocabulary.parse`
+    to get a valid `.SemanticPointer`.
 
-    This is used by the spa.Action parsing system.
+    This is used by the `.spa.Actions` parsing system.
     """
 
     def __init__(self, symbol):
@@ -68,15 +70,15 @@ class Symbol(object):
 
 
 class Source(object):
-    """A particular source of a vector for the Action system.
+    """A particular source of a vector for the action system.
 
-    This will always refer to a particular named output from a spa.Module.
-    It also tracks a single Symbol which represents a desired transformation
-    from that output.  For example, Source('vision')*Symbol('VISION') will
-    result in a Source object for 'vision', but with transform set to the
-    Symbol('VISION').
+    This will always refer to a particular named output from a
+    `.spa.module.Module`. It also tracks a single `.Symbol` which represents
+    a desired transformation from that output. For example,
+    ``Source('vision') * Symbol('VISION')`` will result in a ``Source`` object
+    for ``'vision'``, but with transform set to the ``Symbol('VISION')``.
 
-    This is used by the spa.Action parsing system.
+    This is used by the `.spa.Actions` parsing system.
     """
 
     def __init__(self, name, transform=Symbol('1'), inverted=False):
@@ -86,7 +88,8 @@ class Source(object):
 
     def __invert__(self):
         if self.transform.symbol != '1':
-            raise ValueError("You can only invert sources without transforms")
+            raise SpaParseError(
+                "You can only invert sources without transforms")
         return Source(self.name, self.transform, not self.inverted)
 
     def __mul__(self, other):
@@ -128,13 +131,13 @@ class DotProduct(object):
     """The dot product of a Source and a Source or a Source and a Symbol.
 
     This represents a similarity measure for computing the utility of
-    and action.  It also maintains a scaling factor on the result,
-    so that the 0.5 in "0.5*DotProduct(Source('vision'), Symbol('DOG'))"
+    an action. It also maintains a scaling factor on the result,
+    so that the 0.5 in ``"0.5*DotProduct(Source('vision'), Symbol('DOG'))"``
     can be correctly tracked.
 
     This class is meant to be used with an eval-based parsing system in the
-    Condition class, so that the above DotProduct can also be created with
-    "0.5*dot(vision,DOG)".
+    `.Condition` class, so that the above ``DotProduct`` can also be created
+    with ``"0.5*dot(vision, 'DOG')"``.
     """
 
     def __init__(self, item1, item2, scale=1.0):
@@ -143,14 +146,14 @@ class DotProduct(object):
         if isinstance(item2, (int, float)):
             item2 = Symbol(item2)
         if not isinstance(item1, (Source, Symbol)):
-            raise TypeError("The first item in the dot product is not a "
-                            "semantic pointer or a spa.Module output.")
+            raise SpaParseError("The first item in the dot product is not a "
+                                "semantic pointer or a spa.Module output.")
         if not isinstance(item2, (Source, Symbol)):
-            raise TypeError("The second item in the dot product is not a "
-                            "semantic pointer or a spa.Module output.")
+            raise SpaParseError("The second item in the dot product is not a "
+                                "semantic pointer or a spa.Module output.")
         if not isinstance(item1, Source) and not isinstance(item2, Source):
-            raise TypeError("One of the two terms for the dot product "
-                            "must be a spa.Module output.")
+            raise SpaParseError("One of the two terms for the dot product "
+                                "must be a spa.Module output.")
         self.item1 = item1
         self.item2 = item2
         self.scale = float(scale)

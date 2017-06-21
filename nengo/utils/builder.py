@@ -8,6 +8,7 @@ import collections
 import numpy as np
 
 import nengo
+from nengo.exceptions import Unconvertible, ValidationError
 
 
 def full_transform(conn, slice_pre=True, slice_post=True, allow_scalars=True):
@@ -57,9 +58,11 @@ def full_transform(conn, slice_pre=True, slice_post=True, allow_scalars=True):
         repeated_inds = lambda x: (
             not isinstance(x, slice) and np.unique(x).size != len(x))
         if repeated_inds(pre_slice):
-            raise ValueError("Input object selection has repeated indices")
+            raise NotImplementedError(
+                "Input object selection has repeated indices")
         if repeated_inds(post_slice):
-            raise ValueError("Output object selection has repeated indices")
+            raise NotImplementedError(
+                "Output object selection has repeated indices")
 
         rows_transform = np.array(new_transform[post_slice])
         rows_transform[:, pre_slice] = transform
@@ -69,7 +72,8 @@ def full_transform(conn, slice_pre=True, slice_post=True, allow_scalars=True):
         #  just individual items
         return new_transform
     else:
-        raise ValueError("Transforms with > 2 dims not supported")
+        raise ValidationError("Transforms with > 2 dims not supported",
+                              attr='transform', obj=conn)
 
 
 def default_n_eval_points(n_neurons, dimensions):
@@ -148,15 +152,14 @@ def _create_replacement_connection(c_in, c_out):
     elif c_out.synapse is None:
         synapse = c_in.synapse
     else:
-        raise NotImplementedError('Cannot merge two filters')
+        raise Unconvertible("Cannot merge two filters")
         # Note: the algorithm below is in the right ballpark,
         #  but isn't exactly the same as two low-pass filters
         # filter = c_out.filter + c_in.filter
 
     function = c_in.function
     if c_out.function is not None:
-        raise Exception('Cannot remove a Node with a '
-                        'function being computed on it')
+        raise Unconvertible("Cannot remove a connection with a function")
 
     # compute the combined transform
     transform = np.dot(full_transform(c_out), full_transform(c_in))
@@ -174,8 +177,8 @@ def _create_replacement_connection(c_in, c_out):
     return c
 
 
-def remove_passthrough_nodes(objs, connections,  # noqa: C901
-        create_connection_fn=_create_replacement_connection):
+def remove_passthrough_nodes(  # noqa: C901
+        objs, connections, create_connection_fn=None):
     """Returns a version of the model without passthrough Nodes
 
     For some backends (such as SpiNNaker), it is useful to remove Nodes that
@@ -203,6 +206,8 @@ def remove_passthrough_nodes(objs, connections,  # noqa: C901
     will be replaced with equivalent Connections that don't interact with those
     Nodes.
     """
+    if create_connection_fn is None:
+        create_connection_fn = _create_replacement_connection
 
     inputs, outputs = find_all_io(connections)
     result_conn = list(connections)
@@ -224,7 +229,8 @@ def remove_passthrough_nodes(objs, connections,  # noqa: C901
             # replace those connections with equivalent ones
             for c_in in inputs[obj]:
                 if c_in.pre_obj is obj:
-                    raise Exception('Cannot remove a Node with feedback')
+                    raise Unconvertible(
+                        "Cannot remove a Node with a feedback connection")
 
                 for c_out in outputs[obj]:
                     c = create_connection_fn(c_in, c_out)
