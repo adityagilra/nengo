@@ -120,16 +120,31 @@ class SimInhVSG(Operator):
         self.delta = delta
         self.learning_signal = learning_signal
         self.learning_rate = learning_rate
-        self.tag = tag
 
         self.sets = []
         self.incs = []
         self.reads = [pre_filtered, post_filtered, learning_signal]
         self.updates = [delta]
 
-    def __str__(self):
-        return 'SimInhVSG(pre=%s, post=%s -> %s%s)' % (
-            self.pre_filtered, self.post_filtered, self.delta, self._tagstr)
+    @property
+    def delta(self):
+        return self.updates[0]
+
+    @property
+    def pre_filtered(self):
+        return self.reads[0]
+
+    @property
+    def post_filtered(self):
+        return self.reads[1]
+
+    @property
+    def theta(self):
+        return self.reads[2]
+
+    def _descstr(self):
+        return 'pre=%s, post=%s -> %s' % (
+            self.pre_filtered, self.post_filtered, self.delta)
 
     def make_step(self, signals, dt, rng):
         pre_filtered = signals[self.pre_filtered]
@@ -421,7 +436,6 @@ def build_learning_rule(model, rule):
 
     delta = Signal(np.zeros(target.shape), name='Delta')
 
-
     # update the target (weights/encoders as set above)
     # clip based on clipType
     # decay weights based on decay_rate
@@ -479,7 +493,6 @@ def build_bcm(model, bcm, rule):
     model.sig[rule]['pre_filtered'] = pre_filtered
     model.sig[rule]['post_filtered'] = post_filtered
 
-
 @Builder.register(InhVSG)
 def build_inhvsg(model, inhvsg, rule):
     conn = rule.connection
@@ -506,7 +519,6 @@ def build_inhvsg(model, inhvsg, rule):
     # expose these for probes
     model.sig[rule]['pre_filtered'] = pre_filtered
     model.sig[rule]['post_filtered'] = post_filtered
-
 
 @Builder.register(Oja)
 def build_oja(model, oja, rule):
@@ -606,7 +618,6 @@ def build_voja(model, voja, rule):
     model.sig[rule]['scaled_encoders'] = scaled_encoders
     model.sig[rule]['post_filtered'] = post_filtered
 
-
 @Builder.register(VoltageRule)
 def build_voltagerule(model, voltagerule, rule):
     conn = rule.connection
@@ -654,7 +665,6 @@ def build_voltagerule(model, voltagerule, rule):
     # expose these for probes
     model.sig[rule]['correction'] = local_error
     model.sig[rule]['activities'] = acts
-
 
 @Builder.register(PES)
 def build_pes(model, pes, rule):
