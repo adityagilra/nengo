@@ -5,8 +5,12 @@ User Guide
 .. toctree::
    :maxdepth: 2
 
-   user_api
+   frontend_api
+   config
    networks
+   spa
+   advanced
+   backend_api
    changelog
    history
    converting

@@ -1,17 +1,15 @@
-from __future__ import print_function
-
 import numpy as np
 import pytest
 
 import nengo
 from nengo.builder import Model
 from nengo.builder.ensemble import BuiltEnsemble
-from nengo.builder.operator import DotInc, PreserveValue
 from nengo.builder.signal import Signal, SignalDict
-from nengo.utils.compat import itervalues
+from nengo.exceptions import ObsoleteError, SignalError
+from nengo.utils.compat import itervalues, range
 
 
-def test_seeding(RefSimulator):
+def test_seeding(RefSimulator, logger):
     """Test that setting the model seed fixes everything"""
 
     #  TODO: this really just checks random parameters in ensembles.
@@ -27,18 +25,21 @@ def test_seeding(RefSimulator):
         C = nengo.Connection(A, B, function=lambda x: x ** 2)
 
     m.seed = 872
-    m1 = RefSimulator(m).model.params
-    m2 = RefSimulator(m).model.params
+    with RefSimulator(m) as sim:
+        m1 = sim.data
+    with RefSimulator(m) as sim:
+        m2 = sim.data
     m.seed = 873
-    m3 = RefSimulator(m).model.params
+    with RefSimulator(m) as sim:
+        m3 = sim.data
 
     def compare_objs(obj1, obj2, attrs, equal=True):
         for attr in attrs:
             check = (np.allclose(getattr(obj1, attr), getattr(obj2, attr)) ==
                      equal)
             if not check:
-                print(attr, getattr(obj1, attr))
-                print(attr, getattr(obj2, attr))
+                logger.info("%s: %s", attr, getattr(obj1, attr))
+                logger.info("%s: %s", attr, getattr(obj2, attr))
             assert check
 
     ens_attrs = BuiltEnsemble._fields
@@ -55,7 +56,7 @@ def test_seeding(RefSimulator):
     compare_objs(Cs[0], Cs[2], conn_attrs, equal=False)
 
 
-def test_hierarchical_seeding(RefSimulator):
+def test_hierarchical_seeding():
     """Changes to subnetworks shouldn't affect seeds in top-level network"""
 
     def create(make_extra, seed):
@@ -74,9 +75,17 @@ def test_hierarchical_seeding(RefSimulator):
     same2, same2objs = create(True, 9)
     diff, diffobjs = create(True, 10)
 
-    same1seeds = RefSimulator(same1).model.seeds
-    same2seeds = RefSimulator(same2).model.seeds
-    diffseeds = RefSimulator(diff).model.seeds
+    m1 = Model()
+    m1.build(same1)
+    same1seeds = m1.seeds
+
+    m2 = Model()
+    m2.build(same2)
+    same2seeds = m2.seeds
+
+    m3 = Model()
+    m3.build(diff)
+    diffseeds = m3.seeds
 
     for diffobj, same2obj in zip(diffobjs, same2objs):
         # These seeds should all be different
@@ -102,44 +111,24 @@ def test_signal():
 
 
 def test_signal_values():
-    """Make sure Signal.value and SignalView.value work."""
-    two_d = Signal([[1], [1]])
-    assert np.allclose(two_d.value, np.array([[1], [1]]))
+    """Make sure Signal.initial_value works."""
+    two_d = Signal([[1.], [1.]])
+    assert np.allclose(two_d.initial_value, np.array([[1], [1]]))
     two_d_view = two_d[0, :]
-    assert np.allclose(two_d_view.value, np.array([1]))
-    two_d.value[...] = np.array([[0.5], [-0.5]])
-    assert np.allclose(two_d_view.value, np.array([0.5]))
+    assert np.allclose(two_d_view.initial_value, np.array([1]))
 
-
-def test_signal_init_values(RefSimulator):
-    """Tests that initial values are not overwritten."""
-    zero = Signal([0])
-    one = Signal([1])
-    five = Signal([5.0])
-    zeroarray = Signal([[0], [0], [0]])
-    array = Signal([1, 2, 3])
-
-    m = Model(dt=0)
-    m.operators += [PreserveValue(five), PreserveValue(array),
-                    DotInc(zero, zero, five), DotInc(zeroarray, one, array)]
-
-    sim = RefSimulator(None, model=m)
-    assert sim.signals[zero][0] == 0
-    assert sim.signals[one][0] == 1
-    assert sim.signals[five][0] == 5.0
-    assert np.all(np.array([1, 2, 3]) == sim.signals[array])
-    sim.step()
-    assert sim.signals[zero][0] == 0
-    assert sim.signals[one][0] == 1
-    assert sim.signals[five][0] == 5.0
-    assert np.all(np.array([1, 2, 3]) == sim.signals[array])
+    # cannot change signal value after creation
+    with pytest.raises(SignalError):
+        two_d.initial_value = np.array([[0.5], [-0.5]])
+    with pytest.raises((ValueError, RuntimeError)):
+        two_d.initial_value[...] = np.array([[0.5], [-0.5]])
 
 
 def test_signaldict():
     """Tests SignalDict's dict overrides."""
     signaldict = SignalDict()
 
-    scalar = Signal(1)
+    scalar = Signal(1.)
 
     # Both __getitem__ and __setitem__ raise KeyError
     with pytest.raises(KeyError):
@@ -152,17 +141,17 @@ def test_signaldict():
     # __getitem__ handles scalars
     assert signaldict[scalar].shape == ()
 
-    one_d = Signal([1])
+    one_d = Signal([1.])
     signaldict.init(one_d)
     assert np.allclose(signaldict[one_d], np.array([1.]))
     assert signaldict[one_d].shape == (1,)
 
-    two_d = Signal([[1], [1]])
+    two_d = Signal([[1.], [1.]])
     signaldict.init(two_d)
     assert np.allclose(signaldict[two_d], np.array([[1.], [1.]]))
     assert signaldict[two_d].shape == (2, 1)
 
-    # __getitem__ handles views
+    # __getitem__ handles views implicitly (note no .init)
     two_d_view = two_d[0, :]
     assert np.allclose(signaldict[two_d_view], np.array([1.]))
     assert signaldict[two_d_view].shape == (1,)
@@ -192,10 +181,12 @@ def test_signaldict():
 def test_signaldict_reset():
     """Tests SignalDict's reset function."""
     signaldict = SignalDict()
-    two_d = Signal([[1], [1]])
+    two_d = Signal([[1.], [1.]])
     signaldict.init(two_d)
 
     two_d_view = two_d[0, :]
+    signaldict.init(two_d_view)
+
     signaldict[two_d_view] = -0.5
     assert np.allclose(signaldict[two_d], np.array([[-0.5], [1]]))
 
@@ -224,13 +215,47 @@ def test_signal_reshape():
     assert three_d.reshape((1, 2, 1, 2, 2, 1)).shape == (1, 2, 1, 2, 2, 1)
 
 
-def test_commonsig_readonly(RefSimulator):
+def test_signal_slicing(rng):
+    slices = [0, 1, slice(None, -1), slice(1, None), slice(1, -1),
+              slice(None, None, 3), slice(1, -1, 2)]
+
+    x = np.arange(12, dtype=float)
+    y = np.arange(24, dtype=float).reshape(4, 6)
+    a = Signal(x.copy())
+    b = Signal(y.copy())
+
+    for i in range(100):
+        si0, si1 = rng.randint(0, len(slices), size=2)
+        s0, s1 = slices[si0], slices[si1]
+        assert np.array_equiv(a[s0].initial_value, x[s0])
+        assert np.array_equiv(b[s0, s1].initial_value, y[s0, s1])
+
+    with pytest.raises(ValueError):
+        a[[0, 2]]
+    with pytest.raises(ValueError):
+        b[[0, 1], [3, 4]]
+
+
+def test_commonsig_readonly():
     """Test that the common signals cannot be modified."""
     net = nengo.Network(label="test_commonsig")
-    sim = RefSimulator(net)
-    for sig in itervalues(sim.model.sig['common']):
-        sim.signals.init(sig)
+    model = Model()
+    model.build(net)
+    signals = SignalDict()
+
+    for sig in itervalues(model.sig['common']):
+        signals.init(sig)
         with pytest.raises((ValueError, RuntimeError)):
-            sim.signals[sig] = np.array([-1])
+            signals[sig] = np.array([-1])
         with pytest.raises((ValueError, RuntimeError)):
-            sim.signals[sig][...] = np.array([-1])
+            signals[sig][...] = np.array([-1])
+
+
+def test_obsolete_params(RefSimulator):
+    with nengo.Network() as net:
+        e = nengo.Ensemble(10, 1)
+        c = nengo.Connection(e, e)
+    with RefSimulator(net) as sim:
+        pass
+    with pytest.raises(ObsoleteError):
+        sim.data[c].decoders

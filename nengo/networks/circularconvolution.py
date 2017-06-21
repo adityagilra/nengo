@@ -1,6 +1,9 @@
+import warnings
+
 import numpy as np
 
 import nengo
+from nengo.exceptions import ValidationError
 from nengo.networks.product import Product
 from nengo.utils.compat import range
 from nengo.utils.magic import memoize
@@ -34,7 +37,7 @@ def transform_in(dims, align, invert):
         Whether to reverse the order of elements.
     """
     if align not in ('A', 'B'):
-        raise ValueError("'align' must be either 'A' or 'B'")
+        raise ValidationError("'align' must be either 'A' or 'B'", 'align')
 
     dims2 = 4 * (dims // 2 + 1)
     tr = np.zeros((dims2, dims))
@@ -88,21 +91,22 @@ def dft_half(n):
 
 
 def CircularConvolution(n_neurons, dimensions, invert_a=False, invert_b=False,
-                        input_magnitude=1.0, net=None):
-    """Compute the circular convolution of two vectors.
+                        input_magnitude=1.0, net=None, **kwargs):
+    r"""Compute the circular convolution of two vectors.
 
-    The circular convolution `c` of vectors `a` and `b` is given by
+    The circular convolution :math:`c` of vectors :math:`a` and :math:`b`
+    is given by
 
-        c[i] = sum_j a[j] * b[i - j]
+    .. math:: c[i] = \sum_j a[j] b[i - j]
 
-    where the indices on `b` are assumed to wrap around as required.
+    where negative indices on :math:`b` wrap around to the end of the vector.
 
     This computation can also be done in the Fourier domain,
 
-        c = DFT^{-1}( DFT(a) * DFT(b) )
+    .. math:: c = DFT^{-1} ( DFT(a) DFT(b) )
 
-    where `DFT` is the Discrete Fourier Transform operator, and
-    `DFT^{-1}` is its inverse. This network uses this method.
+    where :math:`DFT` is the Discrete Fourier Transform operator, and
+    :math:`DFT^{-1}` is its inverse. This network uses this method.
 
     Parameters
     ----------
@@ -110,67 +114,99 @@ def CircularConvolution(n_neurons, dimensions, invert_a=False, invert_b=False,
         Number of neurons to use in each product computation
     dimensions : int
         The number of dimensions of the input and output vectors.
-    invert_a, invert_b : bool
+
+    invert_a, invert_b : bool, optional (Default: False, False)
         Whether to reverse the order of elements in either
-        the first input (`invert_a`) or the second input (`invert_b`).
+        the first input (``invert_a``) or the second input (``invert_b``).
         Flipping the second input will make the network perform circular
         correlation instead of circular convolution.
-    input_magnitude : float
-        The expected magnitude (vector norm) of the two input values.
+    input_magnitude : float, optional (Default: 1.0)
+        The expected magnitude of the vectors to be convolved.
+        This value is used to determine the radius of the ensembles
+        computing the element-wise product.
+    kwargs
+        Keyword arguments passed through to ``nengo.Network``.
+
+    Returns
+    -------
+    net : Network
+        The newly built product network, or the provided ``net``.
+
+    Attributes
+    ----------
+    net.input_a : Node
+        The first vector to be convolved.
+    net.input_b : Node
+        The second vector to be convolved.
+    net.product : Network
+        Network created with `.Product` to do the element-wise product
+        of the :math:`DFT` components.
+    net.output : Node
+        The resulting convolved vector.
 
     Examples
     --------
 
-    >>> A = EnsembleArray(50, n_ensembles=10)
-    >>> B = EnsembleArray(50, n_ensembles=10)
-    >>> C = EnsembleArray(50, n_ensembles=10)
-    >>> cconv = nengo.networks.CircularConvolution(50, dimensions=10)
-    >>> nengo.Connection(A.output, cconv.A)
-    >>> nengo.Connection(B.output, cconv.B)
-    >>> nengo.Connection(cconv.output, C.input)
+    A basic example computing the circular convolution of two 10-dimensional
+    vectors represented by ensemble arrays::
+
+        A = EnsembleArray(50, n_ensembles=10)
+        B = EnsembleArray(50, n_ensembles=10)
+        C = EnsembleArray(50, n_ensembles=10)
+        cconv = nengo.networks.CircularConvolution(50, dimensions=10)
+        nengo.Connection(A.output, cconv.input_a)
+        nengo.Connection(B.output, cconv.input_b)
+        nengo.Connection(cconv.output, C.input)
 
     Notes
     -----
-    The network maps the input vectors `a` and `b` of length N into
+
+    The network maps the input vectors :math:`a` and :math:`b` of length N into
     the Fourier domain and aligns them for complex multiplication.
-    Letting `F = DFT(a)` and `G = DFT(b)`, this is given by:
+    Letting :math:`F = DFT(a)` and :math:`G = DFT(b)`, this is given by::
 
         [ F[i].real ]     [ G[i].real ]     [ w[i] ]
         [ F[i].imag ]  *  [ G[i].imag ]  =  [ x[i] ]
         [ F[i].real ]     [ G[i].imag ]     [ y[i] ]
         [ F[i].imag ]     [ G[i].real ]     [ z[i] ]
 
-    where `i` only ranges over the lower half of the spectrum, since
+    where :math:`i` only ranges over the lower half of the spectrum, since
     the upper half of the spectrum is the flipped complex conjugate of
     the lower half, and therefore redundant. The input transforms are
     used to perform the DFT on the inputs and align them correctly for
     complex multiplication.
 
-    The complex product `H = F * G` is then
+    The complex product :math:`H = F * G` is then
 
-        H[i] = (w[i] - x[i]) + (y[i] + z[i]) * I
+    .. math:: H[i] = (w[i] - x[i]) + (y[i] + z[i]) I
 
-    where `I = sqrt(-1)`. We can perform this addition along with the
-    inverse DFT `c = DFT^{-1}(H)` in a single output transform, finding
-    only the real part of `c` since the imaginary part is analytically zero.
+    where :math:`I = \sqrt{-1}`. We can perform this addition along with the
+    inverse DFT :math:`c = DFT^{-1}(H)` in a single output transform, finding
+    only the real part of :math:`c` since the imaginary part
+    is analytically zero.
     """
     if net is None:
-        net = nengo.Network("Circular Convolution")
+        kwargs.setdefault('label', "Circular Convolution")
+        net = nengo.Network(**kwargs)
+    else:
+        warnings.warn("The 'net' argument is deprecated.", DeprecationWarning)
 
     tr_a = transform_in(dimensions, 'A', invert_a)
     tr_b = transform_in(dimensions, 'B', invert_b)
     tr_out = transform_out(dimensions)
 
     with net:
-        net.A = nengo.Node(size_in=dimensions, label="A")
-        net.B = nengo.Node(size_in=dimensions, label="B")
+        net.input_a = net.A = nengo.Node(size_in=dimensions, label="input_a")
+        net.input_b = net.B = nengo.Node(size_in=dimensions, label="input_b")
         net.product = Product(n_neurons, tr_out.shape[1],
                               input_magnitude=input_magnitude * 2)
         net.output = nengo.Node(size_in=dimensions, label="output")
 
-        nengo.Connection(net.A, net.product.A, transform=tr_a, synapse=None)
-        nengo.Connection(net.B, net.product.B, transform=tr_b, synapse=None)
-        nengo.Connection(net.product.output, net.output,
-                         transform=tr_out, synapse=None)
+        nengo.Connection(
+            net.input_a, net.product.input_a, transform=tr_a, synapse=None)
+        nengo.Connection(
+            net.input_b, net.product.input_b, transform=tr_b, synapse=None)
+        nengo.Connection(
+            net.product.output, net.output, transform=tr_out, synapse=None)
 
     return net

@@ -3,22 +3,46 @@ TODO:
   - add a test to test each solver many times on different populations,
     and record the error.
 """
-from __future__ import print_function
-
 import numpy as np
 import pytest
 
 import nengo
 from nengo.dists import UniformHypersphere
-from nengo.utils.compat import range
+from nengo.utils.compat import iteritems, range
 from nengo.utils.numpy import rms, norm
 from nengo.utils.stdlib import Timer
 from nengo.utils.testing import allclose
 from nengo.solvers import (
-    cholesky, conjgrad, block_conjgrad, conjgrad_scipy, lsmr_scipy,
-    Lstsq, LstsqNoise, LstsqL2, LstsqL2nz,
-    LstsqL1, LstsqDrop,
-    Nnls, NnlsL2, NnlsL2nz)
+    lstsq, Lstsq, LstsqNoise, LstsqL2, LstsqL2nz,
+    LstsqL1, LstsqDrop, Nnls, NnlsL2, NnlsL2nz)
+
+
+class Factory(object):
+    def __init__(self, klass, *args, **kwargs):
+        self.klass = klass
+        self.args = args
+        self.kwargs = kwargs
+
+    def __call__(self):
+        args = [v() if isinstance(v, Factory) else v for v in self.args]
+        kwargs = {k: v() if isinstance(v, Factory) else v
+                  for k, v in iteritems(self.kwargs)}
+        return self.klass(*args, **kwargs)
+
+    def __str__(self):
+        try:
+            inst = self()
+        except:
+            inst = "%s(args=%s, kwargs=%s)" % (
+                self.klass, self.args, self.kwargs)
+        return str(inst)
+
+    def __repr__(self):
+        try:
+            inst = self()
+        except:
+            inst = "<%r instance>" % (self.klass.__name__)
+        return repr(inst)
 
 
 def get_encoders(n_neurons, dims, rng=None):
@@ -52,8 +76,8 @@ def test_cholesky(rng):
     b = rng.normal(size=(m, ))
 
     x0, _, _, _ = np.linalg.lstsq(A, b)
-    x1, _ = cholesky(A, b, 0, transpose=False)
-    x2, _ = cholesky(A, b, 0, transpose=True)
+    x1, _ = lstsq.Cholesky(transpose=False)(A, b, 0)
+    x2, _ = lstsq.Cholesky(transpose=True)(A, b, 0)
     assert np.allclose(x0, x1)
     assert np.allclose(x0, x2)
 
@@ -62,9 +86,9 @@ def test_conjgrad(rng):
     A, b = get_system(1000, 100, 2, rng=rng)
     sigma = 0.1 * A.max()
 
-    x0, _ = cholesky(A, b, sigma)
-    x1, _ = conjgrad(A, b, sigma, tol=1e-3)
-    x2, _ = block_conjgrad(A, b, sigma, tol=1e-3)
+    x0, _ = lstsq.Cholesky()(A, b, sigma)
+    x1, _ = lstsq.Conjgrad(tol=1e-3)(A, b, sigma)
+    x2, _ = lstsq.BlockConjgrad(tol=1e-3)(A, b, sigma)
     assert np.allclose(x0, x1, atol=1e-6, rtol=1e-3)
     assert np.allclose(x0, x2, atol=1e-6, rtol=1e-3)
 
@@ -72,6 +96,8 @@ def test_conjgrad(rng):
 @pytest.mark.parametrize('Solver', [
     Lstsq, LstsqNoise, LstsqL2, LstsqL2nz, LstsqDrop])
 def test_decoder_solver(Solver, plt, rng):
+    solver = Solver()
+
     dims = 1
     n_neurons = 100
     n_points = 500
@@ -82,7 +108,7 @@ def test_decoder_solver(Solver, plt, rng):
     train = get_eval_points(n_points, dims, rng=rng)
     Atrain = rates(np.dot(train, E))
 
-    D, _ = Solver()(Atrain, train, rng=rng)
+    D, _ = solver(Atrain, train, rng=rng)
 
     test = get_eval_points(n_points, dims, rng=rng, sort=True)
     Atest = rates(np.dot(test, E))
@@ -93,7 +119,7 @@ def test_decoder_solver(Solver, plt, rng):
     plt.plot(test, test - est)
     plt.title("relative RMSE: %0.2e" % rel_rmse)
 
-    atol = 3.5e-2 if Solver is LstsqNoise else 1.5e-2
+    atol = 3.5e-2 if isinstance(solver, (LstsqNoise, LstsqDrop)) else 1.5e-2
     assert np.allclose(test, est, atol=atol, rtol=1e-3)
     assert rel_rmse < 0.02
 
@@ -104,11 +130,11 @@ def test_subsolvers(Solver, seed, rng, tol=1e-2):
     get_rng = lambda: np.random.RandomState(seed)
 
     A, b = get_system(500, 100, 5, rng=rng)
-    x0, _ = Solver(solver=cholesky)(A, b, rng=get_rng())
+    x0, _ = Solver(solver=lstsq.Cholesky())(A, b, rng=get_rng())
 
-    subsolvers = [conjgrad, block_conjgrad]
+    subsolvers = [lstsq.Conjgrad, lstsq.BlockConjgrad]
     for subsolver in subsolvers:
-        x, info = Solver(solver=subsolver, tol=tol)(A, b, rng=get_rng())
+        x, info = Solver(solver=subsolver(tol=tol))(A, b, rng=get_rng())
         rel_rmse = rms(x - x0) / rms(x0)
         assert rel_rmse < 4 * tol
         # the above 4 * tol is just a heuristic; the main purpose of this
@@ -116,7 +142,9 @@ def test_subsolvers(Solver, seed, rng, tol=1e-2):
         # in-situ. They are tested more robustly elsewhere.
 
 
-@pytest.mark.parametrize('Solver', [LstsqL1])
+@pytest.mark.parametrize('Solver', [
+    Factory(LstsqL2, solver=Factory(lstsq.RandomizedSVD)),
+    LstsqL1])
 def test_decoder_solver_extra(Solver, plt, rng):
     pytest.importorskip('sklearn')
     test_decoder_solver(Solver, plt, rng)
@@ -160,9 +188,9 @@ def test_scipy_solvers(rng):
     A, b = get_system(1000, 100, 2, rng=rng)
     sigma = 0.1 * A.max()
 
-    x0, _ = cholesky(A, b, sigma)
-    x1, _ = conjgrad_scipy(A, b, sigma)
-    x2, _ = lsmr_scipy(A, b, sigma)
+    x0, _ = lstsq.Cholesky()(A, b, sigma)
+    x1, _ = lstsq.ConjgradScipy()(A, b, sigma)
+    x2, _ = lstsq.LSMRScipy()(A, b, sigma)
     assert np.allclose(x0, x1, atol=2e-5, rtol=1e-3)
     assert np.allclose(x0, x2, atol=2e-5, rtol=1e-3)
 
@@ -194,8 +222,9 @@ def test_nnls(Solver, plt, rng):
 def test_subsolvers_L2(rng, logger):
     pytest.importorskip('scipy', minversion='0.11')  # version for lsmr
 
-    ref_solver = cholesky
-    solvers = [conjgrad, block_conjgrad, conjgrad_scipy, lsmr_scipy]
+    ref_solver = lstsq.Cholesky()
+    solvers = [lstsq.Conjgrad(), lstsq.BlockConjgrad(),
+               lstsq.ConjgradScipy(), lstsq.LSMRScipy()]
 
     A, B = get_system(m=2000, n=1000, d=10, rng=rng)
     sigma = 0.1 * A.max()
@@ -207,7 +236,7 @@ def test_subsolvers_L2(rng, logger):
     for i, solver in enumerate(solvers):
         with Timer() as t:
             xs[i], info = solver(A, B, sigma)
-        logger.info('solver: %s', solver.__name__)
+        logger.info('solver: %r' % solver)
         logger.info('duration: %0.3f', t.duration)
         logger.info('duration relative to reference solver: %0.2f',
                     (t.duration / t0.duration))
@@ -257,16 +286,16 @@ def test_compare_solvers(Simulator, plt, seed):
             nengo.Connection(a, b, solver=solver)
             probes.append(nengo.Probe(b))
             names.append("%s(%s)" % (
-                solver.__class__.__name__, 'w' if solver.weights else 'd'))
+                type(solver).__name__, 'w' if solver.weights else 'd'))
 
-    sim = Simulator(model)
-    sim.run(tfinal)
+    with Simulator(model) as sim:
+        sim.run(tfinal)
     t = sim.trange()
 
     # ref = sim.data[up]
-    ref = nengo.synapses.filtfilt(sim.data[ap], 0.02, dt=sim.dt)
+    ref = nengo.Lowpass(0.02).filtfilt(sim.data[ap], dt=sim.dt)
     outputs = np.array([sim.data[probe][:, 0] for probe in probes]).T
-    outputs_f = nengo.synapses.filtfilt(outputs, 0.02, dt=sim.dt)
+    outputs_f = nengo.Lowpass(0.02).filtfilt(outputs, dt=sim.dt)
 
     close = allclose(t, ref, outputs_f,
                      atol=0.07, rtol=0, buf=0.1, delay=0.007,
@@ -313,8 +342,8 @@ def test_regularization(Simulator, nl_nodirect, plt):
                         probes[i, j, k, l] = nengo.Probe(
                             a, solver=Solver(reg=reg), synapse=synapse)
 
-    sim = Simulator(model)
-    sim.run(tfinal)
+    with Simulator(model) as sim:
+        sim.run(tfinal)
     t = sim.trange()
 
     ref = sim.data[up]
@@ -341,7 +370,7 @@ def test_regularization(Simulator, nl_nodirect, plt):
 
 @pytest.mark.slow
 @pytest.mark.noassertions
-def test_eval_points_static(Simulator, plt, rng):
+def test_eval_points_static(plt, rng):
     solver = LstsqL2()
 
     n = 100
@@ -443,10 +472,11 @@ def test_eval_points(Simulator, nl_nodirect, plt, seed, rng, logger):
             with Timer() as timer:
                 sim = Simulator(model)
             sim.run(10 * filter)
+            sim.close()
 
             t = sim.trange()
-            xt = nengo.synapses.filtfilt(sim.data[up], filter, dt=sim.dt)
-            yt = nengo.synapses.filtfilt(sim.data[ap], filter, dt=sim.dt)
+            xt = nengo.Lowpass(filter).filtfilt(sim.data[up], dt=sim.dt)
+            yt = nengo.Lowpass(filter).filtfilt(sim.data[ap], dt=sim.dt)
             t0 = 5 * filter
             t1 = 7 * filter
             tmask = (t > t0) & (t < t1)

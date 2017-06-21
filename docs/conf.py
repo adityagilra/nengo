@@ -3,33 +3,47 @@
 # This file is execfile()d with the current directory set
 # to its containing dir.
 
+import os
 import sys
 
 try:
     import nengo
     import sphinx_rtd_theme
 except ImportError:
-    print ("To build the documentation, nengo and sphinx_rtd_theme must be "
-           "installed in the current environment. Please install these and "
-           "their requirements first. A virtualenv is recommended!")
+    print("To build the documentation, nengo and sphinx_rtd_theme must be "
+          "installed in the current environment. Please install these and "
+          "their requirements first. A virtualenv is recommended!")
     sys.exit(1)
 
 extensions = [
     'sphinx.ext.autodoc',
     'sphinx.ext.autosummary',
+    'sphinx.ext.intersphinx',
     'sphinx.ext.mathjax',
-    'sphinx.ext.viewcode',
     'sphinx.ext.todo',
+    'sphinx.ext.viewcode',
     'numpydoc',
     'nengo.utils.docutils',
 ]
 
-# -- sphinx.ext.todo config
+# -- sphinx.ext.autodoc
+autoclass_content = 'both'  # class and __init__ docstrings are concatenated
+autodoc_default_flags = ['members']
+autodoc_member_order = 'bysource'  # default is alphabetical
+
+# -- sphinx.ext.intersphinx
+intersphinx_mapping = {
+    'numpy': ('https://docs.scipy.org/doc/numpy', None),
+    'python': ('https://docs.python.org/3/', None),
+    'scipy': ('https://docs.scipy.org/doc/scipy/reference', None),
+}
+
+# -- sphinx.ext.todo
 todo_include_todos = True
 # -- numpydoc config
 numpydoc_show_class_members = False
 
-# -- sphinx config
+# -- sphinx
 exclude_patterns = ['_build']
 source_suffix = '.rst'
 source_encoding = 'utf-8'
@@ -51,7 +65,10 @@ pygments_style = 'default'
 html_theme = 'sphinx_rtd_theme'
 html_theme_path = [sphinx_rtd_theme.get_html_theme_path()]
 html_title = "Nengo {0} docs".format(release)
-# html_static_path = ['_static']
+html_static_path = ['_static']
+html_context = {
+    'css_files': [os.path.join('_static', 'custom.css')],
+}
 html_use_smartypants = True
 htmlhelp_basename = 'Nengodoc'
 html_last_updated_fmt = ''  # Suppress 'Last updated on:' timestamp

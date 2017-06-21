@@ -17,5 +17,7 @@ log.txt
 .vagrant
 wintest.sh
 Vagrantfile
-
 *.class
+*.eggs/
+.coverage
+htmlcov

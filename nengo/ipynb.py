@@ -10,21 +10,38 @@ Note
 This IPython extension cannot be unloaded.
 """
 
+try:
+    from html import escape
+except ImportError:
+    from cgi import escape as cgi_escape
+    escape = lambda s, quote=True: cgi_escape(s, quote=quote)
+import warnings
+
+import IPython
+
 from nengo.rc import rc
 from nengo.utils.ipython import has_ipynb_widgets
 from nengo.utils.progress import ProgressBar, timestamp2timedelta
 
 if has_ipynb_widgets():
-    import IPython
     if IPython.version_info[0] <= 3:
         from IPython.html.widgets import DOMWidget
         import IPython.utils.traitlets as traitlets
     else:
+        import ipywidgets
         from ipywidgets import DOMWidget
         import traitlets
     from IPython.display import display
 else:
-    DOMWidget = object
+    raise ImportError(
+        "Required dependency could not be loaded. Please install ipywidgets.")
+
+
+try:
+    import notebook
+    notebook_version = notebook.version_info
+except ImportError:
+    notebook_version = IPython.version_info
 
 
 def load_ipython_extension(ipython):
@@ -39,20 +56,13 @@ class IPythonProgressWidget(DOMWidget):
 
     # pylint: disable=too-many-public-methods
     _view_name = traitlets.Unicode('NengoProgressBar', sync=True)
+    if notebook_version[0] >= 4:
+        _view_module = traitlets.Unicode('nengo', sync=True)
     progress = traitlets.Float(0., sync=True)
     text = traitlets.Unicode(u'', sync=True)
 
-    FRONTEND = '''
-    require(["widgets/js/widget", "widgets/js/manager"],
-        function(widget, manager) {
-      if (typeof widget.DOMWidgetView == 'undefined') {
-        widget = IPython;
-      }
-      if (typeof manager.WidgetManager == 'undefined') {
-        manager = IPython;
-      }
-
-      var NengoProgressBar = widget.DOMWidgetView.extend({
+    WIDGET = '''
+      var NengoProgressBar = widgets.DOMWidgetView.extend({
         render: function() {
           // Work-around for messed up CSS in IPython 4
           $('.widget-subarea').css({flex: '2 1 0%'});
@@ -84,18 +94,60 @@ class IPythonProgressWidget(DOMWidget):
           var progress = 100 * this.model.get('progress');
           var text = this.model.get('text');
           this.$el.find('div.pb-bar').width(progress.toString() + '%');
-          this.$el.find('div.pb-text').text(text);
+          this.$el.find('div.pb-text').html(text);
         },
       });
+    '''
+
+    FRONTEND = '''
+    define('nengo', ["jupyter-js-widgets"], function(widgets) {{
+        {widget}
+
+      return {{
+        NengoProgressBar: NengoProgressBar
+      }};
+    }});'''.format(widget=WIDGET)
+
+    LEGACY_FRONTEND = '''
+    require(["widgets/js/widget", "widgets/js/manager"],
+        function(widgets, manager) {{
+      if (typeof widgets.DOMWidgetView == 'undefined') {{
+        widgets = IPython;
+      }}
+      if (typeof manager.WidgetManager == 'undefined') {{
+        manager = IPython;
+      }}
+
+      {widget}
 
       manager.WidgetManager.register_widget_view(
         'NengoProgressBar', NengoProgressBar);
-    });'''
+    }});'''.format(widget=WIDGET)
+
+    LEGACY_4_FRONTEND = '''
+    define('nengo', ["widgets/js/widget"], function(widgets) {{
+        {widget}
+
+      return {{
+        NengoProgressBar: NengoProgressBar
+      }};
+    }});'''.format(widget=WIDGET)
 
     @classmethod
     def load_frontend(cls, ipython):
         """Loads the JavaScript front-end code required by then widget."""
-        ipython.run_cell_magic('javascript', '', cls.FRONTEND)
+        if notebook_version[0] < 4:
+            ipython.run_cell_magic('javascript', '', cls.LEGACY_FRONTEND)
+        elif ipywidgets.version_info[0] < 5:
+            nb_ver_4x = (notebook_version[0] == 4 and notebook_version[1] > 1)
+            if notebook_version[0] > 4 or nb_ver_4x:
+                warnings.warn(
+                    "Incompatible versions of notebook and ipywidgets "
+                    "detected. Please update your ipywidgets package to "
+                    "version 5 or above.")
+            ipython.run_cell_magic('javascript', '', cls.LEGACY_4_FRONTEND)
+        else:
+            ipython.run_cell_magic('javascript', '', cls.FRONTEND)
 
 
 class IPython2ProgressBar(ProgressBar):
@@ -103,8 +155,9 @@ class IPython2ProgressBar(ProgressBar):
 
     supports_fast_ipynb_updates = True
 
-    def __init__(self, task="Simulation"):
+    def __init__(self, task):
         super(IPython2ProgressBar, self).__init__(task)
+        self._escaped_task = escape(task)
         self._widget = IPythonProgressWidget()
         self._initialized = False
 
@@ -115,10 +168,11 @@ class IPython2ProgressBar(ProgressBar):
 
         self._widget.progress = progress.progress
         if progress.finished:
-            self._widget.text = "{0} finished in {1}.".format(
-                self.task,
+            self._widget.text = "{} finished in {}.".format(
+                self._escaped_task,
                 timestamp2timedelta(progress.elapsed_seconds()))
         else:
-            self._widget.text = "{progress:.0f}%, ETA: {eta}".format(
-                progress=100 * progress.progress,
-                eta=timestamp2timedelta(progress.eta()))
+            self._widget.text = (
+                "{task}&hellip; {progress:.0f}%, ETA: {eta}".format(
+                    task=self._escaped_task, progress=100 * progress.progress,
+                    eta=timestamp2timedelta(progress.eta())))

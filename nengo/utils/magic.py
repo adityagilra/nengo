@@ -121,7 +121,7 @@ class ObjectProxy(with_metaclass(ObjectProxyMeta)):
 
     @property
     def __class__(self):
-        return self.__wrapped__.__class__
+        return type(self.__wrapped__)
 
     def __dir__(self):
         return dir(self.__wrapped__)
@@ -143,9 +143,6 @@ class ObjectProxy(with_metaclass(ObjectProxyMeta)):
             type(self).__name__, id(self),
             type(self.__wrapped__).__name__,
             id(self.__wrapped__))
-
-    def __unicode__(self):
-        return unicode(self.__wrapped__)
 
 
 class BoundFunctionWrapper(ObjectProxy):

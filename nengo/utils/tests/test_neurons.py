@@ -1,5 +1,3 @@
-from __future__ import print_function
-
 import pytest
 
 import numpy as np
@@ -31,8 +29,8 @@ def _test_rates(Simulator, rates, plt, seed):
         ap = nengo.Probe(a.neurons)
         bp = nengo.Probe(b.neurons)
 
-    sim = Simulator(model, seed=seed+1)
-    sim.run(2.)
+    with Simulator(model, seed=seed+1) as sim:
+        sim.run(2.)
 
     t = sim.trange()
     x = sim.data[up]
@@ -40,18 +38,19 @@ def _test_rates(Simulator, rates, plt, seed):
     spikes = sim.data[bp]
     b_rates = rates(t, spikes)
 
-    ax = plt.subplot(411)
-    plt.plot(t, x)
-    ax = plt.subplot(412)
-    implot(plt, t, intercepts, a_rates.T, ax=ax)
-    ax.set_ylabel('intercept')
-    ax = plt.subplot(413)
-    implot(plt, t, intercepts, b_rates.T, ax=ax)
-    ax.set_ylabel('intercept')
-    ax = plt.subplot(414)
-    implot(plt, t, intercepts, (b_rates - a_rates).T, ax=ax)
-    ax.set_xlabel('time [s]')
-    ax.set_ylabel('intercept')
+    if plt is not None:
+        ax = plt.subplot(411)
+        plt.plot(t, x)
+        ax = plt.subplot(412)
+        implot(plt, t, intercepts, a_rates.T, ax=ax)
+        ax.set_ylabel('intercept')
+        ax = plt.subplot(413)
+        implot(plt, t, intercepts, b_rates.T, ax=ax)
+        ax.set_ylabel('intercept')
+        ax = plt.subplot(414)
+        implot(plt, t, intercepts, (b_rates - a_rates).T, ax=ax)
+        ax.set_xlabel('time [s]')
+        ax.set_ylabel('intercept')
 
     tmask = (t > 0.1) & (t < 1.9)
     relative_rmse = rms(b_rates[tmask] - a_rates[tmask]) / rms(a_rates[tmask])
@@ -70,7 +69,7 @@ def test_rates_kernel(Simulator, plt, seed):
 
 
 @pytest.mark.noassertions
-def test_rates(Simulator, plt, seed, logger):
+def test_rates(Simulator, seed, logger):
     pytest.importorskip('scipy')
     functions = [
         ('isi_zero', lambda t, s: rates_isi(
@@ -89,7 +88,6 @@ def test_rates(Simulator, plt, seed, logger):
     ]
 
     for name, function in functions:
-        rel_rmse = _test_rates(Simulator, function, plt, seed)
+        rel_rmse = _test_rates(Simulator, function, None, seed)
         logger.info('rate estimator: %s', name)
         logger.info('relative RMSE: %0.4f', rel_rmse)
-    plt.saveas = None

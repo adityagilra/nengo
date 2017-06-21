@@ -1,29 +1,33 @@
 import numpy as np
 
+from nengo.exceptions import ValidationError
 from nengo.utils.compat import is_integer, is_number, range
 
 
 class SemanticPointer(object):
     """A Semantic Pointer, based on Holographic Reduced Representations.
 
-    Operators are overloaded so that + and - are addition, * is circular
-    convolution, and ~ is the inversion operator.
+    Operators are overloaded so that ``+`` and ``-`` are addition,
+    ``*`` is circular convolution, and ``~`` is the inversion operator.
     """
 
     def __init__(self, data, rng=None):
         if is_integer(data):
             if data < 1:
-                raise Exception("number of dimensions must be a positive int")
+                raise ValidationError("Number of dimensions must be a "
+                                      "positive int", attr='data', obj=self)
+
             self.randomize(data, rng=rng)
         else:
             try:
                 len(data)
             except:
-                raise Exception("Must specify either the data or the length "
-                                "for a SemanticPointer.")
+                raise ValidationError(
+                    "Must specify either the data or the length for a "
+                    "SemanticPointer.", attr='data', obj=self)
             self.v = np.array(data, dtype=float)
             if len(self.v.shape) != 1:
-                raise Exception("data must be a vector")
+                raise ValidationError("'data' must be a vector", 'data', self)
 
     def length(self):
         """Return the L2 norm of the vector."""
@@ -76,14 +80,15 @@ class SemanticPointer(object):
     def __mul__(self, other):
         """Multiplication of two SemanticPointers is circular convolution.
 
-        If mutliplied by a scaler, we do normal multiplication.
+        If multiplied by a scalar, we do normal multiplication.
         """
         if isinstance(other, SemanticPointer):
             return self.convolve(other)
         elif is_number(other):
             return SemanticPointer(data=self.v * other)
         else:
-            raise Exception('Can only multiply by SemanticPointers or scalars')
+            raise NotImplementedError(
+                "Can only multiply by SemanticPointers or scalars")
 
     def convolve(self, other):
         """Return the circular convolution of two SemanticPointers."""
@@ -100,7 +105,8 @@ class SemanticPointer(object):
         elif is_number(other):
             return SemanticPointer(data=self.v * other)
         else:
-            raise Exception('Can only multiply by SemanticPointers or scalars')
+            raise NotImplementedError(
+                "Can only multiply by SemanticPointers or scalars")
 
     def __imul__(self, other):
         """Multiplication of two SemanticPointers is circular convolution.
@@ -113,7 +119,8 @@ class SemanticPointer(object):
         elif is_number(other):
             self.v *= other
         else:
-            raise Exception('Can only multiply by SemanticPointers or scalars')
+            raise NotImplementedError(
+                "Can only multiply by SemanticPointers or scalars")
         return self
 
     def compare(self, other):
@@ -138,7 +145,7 @@ class SemanticPointer(object):
     def distance(self, other):
         """Return a distance measure between the vectors.
 
-        This is 1-cos(angle), so that it is 0 when they are identical, and
+        This is ``1-cos(angle)``, so that it is 0 when they are identical, and
         the distance gets larger as the vectors are farther apart.
         """
         return 1 - self.compare(other)
@@ -147,9 +154,9 @@ class SemanticPointer(object):
         """Return a reorganized vector that acts as an inverse for convolution.
 
         This reorganization turns circular convolution into circular
-        correlation, meaning that A*B*~B is approximately A.
+        correlation, meaning that ``A*B*~B`` is approximately ``A``.
 
-        For the vector [1,2,3,4,5], the inverse is [1,5,4,3,2].
+        For the vector ``[1, 2, 3, 4, 5]``, the inverse is ``[1, 5, 4, 3, 2]``.
         """
         return SemanticPointer(data=self.v[-np.arange(len(self))])
 
@@ -168,7 +175,7 @@ class SemanticPointer(object):
     def get_convolution_matrix(self):
         """Return the matrix that does a circular convolution by this vector.
 
-        This should be such that A*B == dot(A.get_convolution_matrix, B.v)
+        This should be such that ``A*B == dot(A.get_convolution_matrix, B.v)``.
         """
         D = len(self.v)
         T = []
