@@ -114,16 +114,14 @@ class SimInhVSG(Operator):
     """Calculate delta omega according to the VSG rule."""
     def __init__(self, pre_filtered, post_filtered, theta, delta,
                  learning_signal, learning_rate, tag=None):
-        self.post_filtered = post_filtered
-        self.pre_filtered = pre_filtered
-        self.theta = theta
-        self.delta = delta
-        self.learning_signal = learning_signal
+        super(SimInhVSG, self).__init__(tag=tag)
         self.learning_rate = learning_rate
 
         self.sets = []
         self.incs = []
-        self.reads = [pre_filtered, post_filtered, learning_signal]
+        # only signals go as self.reads and self.updates with the @property below
+        #  not floats like learning_rate,
+        self.reads = [pre_filtered, post_filtered, learning_signal, theta]
         self.updates = [delta]
 
     @property
@@ -139,8 +137,12 @@ class SimInhVSG(Operator):
         return self.reads[1]
 
     @property
-    def theta(self):
+    def learning_signal(self):
         return self.reads[2]
+
+    @property
+    def theta(self):
+        return self.reads[3]
 
     def _descstr(self):
         return 'pre=%s, post=%s -> %s' % (
@@ -152,10 +154,12 @@ class SimInhVSG(Operator):
         delta = signals[self.delta]
         learning_signal = signals[self.learning_signal]
         alpha = self.learning_rate * dt
+        theta = signals[self.theta]
 
+        # don't use any self. variables below (e.g. theta), define above only
         def step_siminhvsg():
             delta[...] = -1.0 * np.outer(
-                alpha * learning_signal * (post_filtered - self.theta), pre_filtered)
+                alpha * learning_signal * (post_filtered - theta), pre_filtered)
                                                                 # -1.0* for enforcing inhibition
         return step_siminhvsg
 
@@ -437,12 +441,12 @@ def build_learning_rule(model, rule):
     delta = Signal(np.zeros(target.shape), name='Delta')
 
     # update the target (weights/encoders as set above)
-    # clip based on clipType
+    # clip based on clip_type
     # decay weights based on decay_rate
     model.add_op(
         ElementwiseInc(model.sig['common'][1],
                         delta, target, tag=tag, 
-                        clipType=rule.learning_rule_type.clipType,
+                        clip_type=rule.learning_rule_type.clip_type,
                         decay_factor=(1.0-rule.learning_rule_type.decay_rate_x_dt)))
     model.sig[rule]['delta'] = delta
 
@@ -499,19 +503,24 @@ def build_inhvsg(model, inhvsg, rule):
 
     # Learning signal, defaults to 1 in case no connection is made
     # and multiplied by the learning_rate * dt
-    learning = Signal(np.zeros(rule.size_in), name="InhVSG:learning")
     assert rule.size_in == 1
+    learning = Signal(np.zeros(rule.size_in), name="InhVSG:learning")
     model.add_op(Reset(learning, value=1.0))
     model.sig[rule]['in'] = learning  # optional connection will attach here
+    if isinstance(inhvsg.theta,float):
+        theta = Signal(np.ones(conn.size_out)*inhvsg.theta,
+                            name="InhVSG:theta", readonly=True)
+    else:
+        theta = Signal(inhvsg.theta, name="InhVSG:theta", readonly=True)
 
     pre_activities = model.sig[get_pre_ens(conn).neurons]['out']
     pre_filtered = model.build(Lowpass(inhvsg.pre_tau), pre_activities)
     post_activities = model.sig[get_post_ens(conn).neurons]['out']
     post_filtered = model.build(Lowpass(inhvsg.post_tau), post_activities)
-
+    
     model.add_op(SimInhVSG(pre_filtered,
                         post_filtered,
-                        inhvsg.theta,
+                        theta,
                         model.sig[rule]['delta'],
                         learning,
                         learning_rate=inhvsg.learning_rate))

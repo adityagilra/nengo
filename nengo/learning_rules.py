@@ -56,6 +56,8 @@ class LearningRuleType(FrozenObject):
         A scalar indicating the rate at which ``modifies`` will be adjusted.
     size_in : int, str, optional (Default: 0)
         Dimensionality of the error signal (see above).
+    clip_type: one of None, 'clip<0', 'clip>0'
+    decay_rate_x_dt: float, (1-decay_rate_x_dt) multiplies weight every dt
 
     Attributes
     ----------
@@ -74,10 +76,6 @@ class LearningRuleType(FrozenObject):
     size_in = LearningRuleTypeSizeInParam('size_in', low=0)
 
     def __init__(self, learning_rate=1e-6, size_in=0, clip_type=None, decay_rate_x_dt=0.0):
-        '''
-            clip_type can be one of None, 'clip<0', 'clip>0'
-            decay_rate_x_dt is a float that multiplies weight at every time step after weight updation
-        '''
         super(LearningRuleType, self).__init__()
         self.learning_rate = learning_rate
         self.size_in = size_in
@@ -139,7 +137,8 @@ class PES(LearningRuleType):
                           "in floating point errors from too much current.")
         self.pre_tau = pre_tau
         self.integral_tau = integral_tau
-        super(PES, self).__init__(learning_rate, size_in='post_state', clip_type, decay_rate_x_dt)
+        super(PES, self).__init__(learning_rate, size_in='post_state', 
+                        clip_type=clip_type, decay_rate_x_dt=decay_rate_x_dt)
 
     @property
     def _argreprs(self):
@@ -189,7 +188,8 @@ class VoltageRule(LearningRuleType):
                           "in floating point errors from too much current.")
         self.pre_tau = pre_tau
         self.integral_tau = integral_tau
-        super(VoltageRule, self).__init__(learning_rate, size_in='post_state', clipType, decay_rate_x_dt)
+        super(VoltageRule, self).__init__(learning_rate, size_in='post_state',
+                        clip_type=clip_type, decay_rate_x_dt=decay_rate_x_dt)
 
     @property
     def _argreprs(self):
@@ -276,20 +276,17 @@ class InhVSG(LearningRuleType):
 
     Parameters
     ----------
-    learning_rate : float, optional
-        A scalar indicating the rate at which decoders will be adjusted.
-        Defaults to 1e-5.
-    theta : float, optional
-        A scalar indicating the desired firing rate.
+    theta : float or array of size connection.size_out of floats, optional
+        indicating the desired mean post-syn firing rate(s) after I-|E learning.
     pre_tau : float, optional
         Filter constant on activities of neurons in pre population.
     post_tau : float, optional (Default: None)
         Filter constant on activities of neurons in post population.
         If None, post_tau will be the same as pre_tau.
-    beta : float, optional (Default: 1.0)
-        A scalar weight on the forgetting term.
-    learning_rate : float, optional (Default: 1e-6)
+    learning_rate : float, optional (Default: 1e-9)
         A scalar indicating the rate at which weights will be adjusted.
+    clip_type can be one of None, 'clip<0', 'clip>0'
+    decay_rate_x_dt: float, (1-decay_rate_x_dt) multiplies weight every dt
 
     Attributes
     ----------
@@ -315,7 +312,8 @@ class InhVSG(LearningRuleType):
         self.pre_tau = pre_tau
         self.post_tau = post_tau if post_tau is not None else pre_tau
         self.theta = theta
-        super(InhVSG, self).__init__(learning_rate, size_in=0, clip_type, decay_rate_x_dt)
+        super(InhVSG, self).__init__(learning_rate, size_in=1,
+                        clip_type=clip_type, decay_rate_x_dt=decay_rate_x_dt)
 
     @property
     def _argreprs(self):

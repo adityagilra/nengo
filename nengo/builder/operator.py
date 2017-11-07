@@ -411,6 +411,11 @@ class ElementwiseInc(Operator):
         The signal to be incremented.
     tag : str, optional (Default: None)
         A label associated with the operator, for debugging purposes.
+    clip_type : int,
+        =0 for no clipping; =1 for clip<0; =2 for clip>0
+    decay_factor : float,
+        weight is multiplied by decay_factor,
+        after updation by deltaW, at each time step
 
     Attributes
     ----------
@@ -422,6 +427,11 @@ class ElementwiseInc(Operator):
         The second signal to be multiplied.
     Y : Signal
         The signal to be incremented.
+    clip_type : int,
+        =0 for no clipping; =1 for clip<0; =2 for clip>0
+    decay_factor : float,
+        weight is multiplied by decay_factor,
+        before updation by deltaW, at each time step
 
     Notes
     -----
@@ -432,11 +442,6 @@ class ElementwiseInc(Operator):
     """
 
     def __init__(self, A, X, Y, tag=None, clip_type=0, decay_factor=1.0):
-        '''
-            int clip_type: =0 for no clipping; =1 for clip<0; =2 for clip>0
-            float decay_factor: weight is multiplied by decay_factor,
-                after updation by deltaW, at each time step
-        '''
         super(ElementwiseInc, self).__init__(tag=tag)
         self.sets = []
         self.incs = [Y]
@@ -475,14 +480,17 @@ class ElementwiseInc(Operator):
                 raise BuildError("Incompatible shapes in ElementwiseInc: "
                                  "Trying to do %s += %s * %s" %
                                  (Yshape, Ashape, Xshape))
+        decay_factor = self.decay_factor
+        clip_type = self.clip_type
+        print self.tag,clip_type,decay_factor
 
         def step_elementwiseinc():
+            Y[...] *= decay_factor
             Y[...] += A * X
-            Y[...] *= self.decay_factor
             # clip_type =0:no clipping; =1:clip<0; =2:clip>0
-            if self.clip_type == 1: 
+            if clip_type == 1: 
                 Y[...] = Y.clip(0)
-            elif self.clip_type == 2:
+            elif clip_type == 2:
                 Y[...] = Y.clip(max=0)
         return step_elementwiseinc
 
