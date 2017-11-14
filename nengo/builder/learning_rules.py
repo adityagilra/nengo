@@ -198,16 +198,17 @@ class SimOja(Operator):
         pre_filtered = signals[self.pre_filtered]
         post_filtered = signals[self.post_filtered]
         delta = signals[self.delta]
-        alpha = self.learning_rate * dt
+        alpha = -self.learning_rate * dt
         beta = self.beta
 
         def step_simoja():
             # perform forgetting
             post_squared = alpha * post_filtered * post_filtered
-            delta[...] = -beta * weights * post_squared[:, None]
+            #delta[...] = -beta * weights * post_squared[:, None]
 
             # perform update
-            delta[...] += np.outer(alpha * post_filtered, pre_filtered)
+            #delta[...] += np.outer(alpha * post_filtered, pre_filtered)
+            delta[...] = np.outer(alpha * post_filtered, pre_filtered)
 
         return step_simoja
 
@@ -453,7 +454,9 @@ def build_oja(model, oja, rule):
 
     conn = rule.connection
     pre_activities = model.sig[get_pre_ens(conn).neurons]['out']
-    post_activities = model.sig[get_post_ens(conn).neurons]['out']
+    #post_activities = model.sig[get_post_ens(conn).neurons]['out']
+    # use post-current (need +ve and -ve) instead of post-spiking
+    post_activities = model.sig[conn]['out']
     pre_filtered = model.build(Lowpass(oja.pre_tau), pre_activities)
     post_filtered = model.build(Lowpass(oja.post_tau), post_activities)
 

@@ -383,7 +383,7 @@ class Connection(NengoObject):
         Also the number of output dimensions of the transform.
     """
 
-    probeable = ('output', 'input', 'weights')
+    probeable = ('output', 'input', 'weights', 'weighted')
 
     pre = PrePostParam('pre', nonzero_size_out=True)
     post = PrePostParam('post', nonzero_size_in=True)
